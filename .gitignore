@@ -1,0 +1,65 @@
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.Python
+build/
+dist/
+
+# ── Environnements virtuels ─────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Données volumineuses (à NE PAS committer) ───────────────────────────────
+# Saisons FBref — gros volumes (peuvent dépasser 1 GB cumulés)
+2122/
+2223/
+2324/
+2425/
+2526/
+# Dataset Kaggle Transfermarkt (~150 MB)
+transfermarkt_data/
+# Cache soccerdata
+~/soccerdata/
+soccerdata_cache/
+# Téléchargements / verrous
+downloaded_files/
+kaggle/
+*.lock
+
+# ── Notebooks ───────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ── IDE / éditeurs ──────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.spyder*
+
+# ── OS ──────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Streamlit ───────────────────────────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── Secrets / clés ──────────────────────────────────────────────────────────
+.env
+.env.*
+*.pem
+*.key
+.kaggle/
+
+# ── Logs / outputs temporaires ──────────────────────────────────────────────
+*.log
+logs/
+tmp/
+
+# ── Chart Club (sources annexes inutilisées par défaut) ─────────────────────
+Chart Club/
