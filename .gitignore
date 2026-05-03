@@ -2,18 +2,37 @@
 __pycache__/
 *.py[cod]
 *$py.class
-*.egg-info/
+*.so
 .Python
 build/
+develop-eggs/
 dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
 # ── Environnements virtuels ─────────────────────────────────────────────────
+.env
+.env.*
 .venv/
 venv/
 env/
 ENV/
+env.bak/
+venv.bak/
 
-# ── Données volumineuses (à NE PAS committer) ───────────────────────────────
+# ── Données volumineuses ElevenField (à NE PAS committer) ───────────────────
 # Saisons FBref — gros volumes (peuvent dépasser 1 GB cumulés)
 2122/
 2223/
@@ -23,43 +42,61 @@ ENV/
 # Dataset Kaggle Transfermarkt (~150 MB)
 transfermarkt_data/
 # Cache soccerdata
-~/soccerdata/
 soccerdata_cache/
 # Téléchargements / verrous
 downloaded_files/
 kaggle/
 *.lock
+# Chart Club (sources annexes inutilisées par défaut)
+Chart Club/
 
 # ── Notebooks ───────────────────────────────────────────────────────────────
 .ipynb_checkpoints/
-*.ipynb_checkpoints
+profile_default/
+ipython_config.py
+
+# ── Tests / type checkers ──────────────────────────────────────────────────
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+cover/
+*.cover
 
 # ── IDE / éditeurs ──────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
-.spyder*
+.spyderproject
+.spyproject
+.ropeproject
+
+# ── Streamlit ───────────────────────────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── Secrets / clés ──────────────────────────────────────────────────────────
+*.pem
+*.key
+.kaggle/
+.pypirc
 
 # ── OS ──────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# ── Streamlit ───────────────────────────────────────────────────────────────
-.streamlit/secrets.toml
-
-# ── Secrets / clés ──────────────────────────────────────────────────────────
-.env
-.env.*
-*.pem
-*.key
-.kaggle/
-
-# ── Logs / outputs temporaires ──────────────────────────────────────────────
+# ── Logs ────────────────────────────────────────────────────────────────────
 *.log
 logs/
 tmp/
-
-# ── Chart Club (sources annexes inutilisées par défaut) ─────────────────────
-Chart Club/
+pip-log.txt
+pip-delete-this-directory.txt
