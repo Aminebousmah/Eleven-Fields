@@ -1,0 +1,167 @@
+/* ElevenField — Thème sombre football */
+
+/* ── Variables ─────────────────────────────────────────────── */
+:root {
+    --bg:           #0e1117;
+    --surface:      #1a1a2e;
+    --card:         #16213e;
+    --border:       #2d2d4e;
+    --green:        #00ff99;
+    --red:          #ff4655;
+    --gold:         #ffd700;
+    --blue:         #00b4d8;
+    --text:         #ffffff;
+    --text-muted:   #8899aa;
+}
+
+/* ── App background ────────────────────────────────────────── */
+.stApp {
+    background-color: var(--bg) !important;
+    color: var(--text) !important;
+}
+
+/* ── Sidebar ───────────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    background-color: var(--surface) !important;
+    border-right: 1px solid var(--border) !important;
+}
+[data-testid="stSidebar"] .stSelectbox label,
+[data-testid="stSidebar"] .stRadio label,
+[data-testid="stSidebar"] .stSlider label {
+    color: var(--text-muted) !important;
+    font-size: 0.8rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Sidebar: forcer texte blanc pour navigation et contenu général */
+[data-testid="stSidebar"] *,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] div {
+    color: var(--text) !important;
+}
+/* Items de navigation (radio) en blanc, gras au survol/sélection */
+[data-testid="stSidebar"] .stRadio [role="radiogroup"] label {
+    color: var(--text) !important;
+    font-size: 0.95rem !important;
+    text-transform: none !important;
+    letter-spacing: 0 !important;
+    padding: 6px 4px;
+    border-radius: 6px;
+    transition: background 0.15s;
+}
+[data-testid="stSidebar"] .stRadio [role="radiogroup"] label:hover {
+    background: var(--card) !important;
+}
+[data-testid="stSidebar"] .stRadio [role="radiogroup"] label p {
+    color: var(--text) !important;
+    font-weight: 500;
+}
+/* Les "petits labels" majuscules conservent leur teinte muted */
+[data-testid="stSidebar"] .stSelectbox > label,
+[data-testid="stSidebar"] .stSlider > label {
+    color: var(--text-muted) !important;
+}
+
+/* ── Selectboxes ───────────────────────────────────────────── */
+[data-testid="stSelectbox"] > div > div {
+    background-color: var(--card) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text) !important;
+    border-radius: 8px !important;
+}
+
+/* ── Tabs ──────────────────────────────────────────────────── */
+[data-testid="stTab"] {
+    background-color: transparent !important;
+    color: var(--text-muted) !important;
+    border-bottom: 2px solid transparent;
+}
+[data-testid="stTab"][aria-selected="true"] {
+    color: var(--green) !important;
+    border-bottom: 2px solid var(--green) !important;
+    font-weight: 700;
+}
+
+/* ── DataFrames ────────────────────────────────────────────── */
+[data-testid="stDataFrame"] {
+    border: 1px solid var(--border) !important;
+    border-radius: 8px !important;
+}
+
+/* ── Dividers ──────────────────────────────────────────────── */
+hr {
+    border-color: var(--border) !important;
+    margin: 12px 0 !important;
+}
+
+/* ── Sliders ───────────────────────────────────────────────── */
+[data-testid="stSlider"] .rc-slider-track {
+    background-color: var(--green) !important;
+}
+[data-testid="stSlider"] .rc-slider-handle {
+    border-color: var(--green) !important;
+    background-color: var(--green) !important;
+}
+
+/* ── Boutons ───────────────────────────────────────────────── */
+.stButton > button {
+    background-color: var(--surface) !important;
+    color: var(--green) !important;
+    border: 1px solid var(--green) !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    transition: all 0.2s;
+}
+.stButton > button:hover {
+    background-color: var(--green) !important;
+    color: var(--bg) !important;
+}
+
+/* ── Metric (natif Streamlit) ──────────────────────────────── */
+[data-testid="metric-container"] {
+    background-color: var(--card) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 10px !important;
+    padding: 12px 16px !important;
+}
+
+/* ── Expanders ─────────────────────────────────────────────── */
+[data-testid="stExpander"] {
+    background-color: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 8px !important;
+}
+[data-testid="stExpander"] summary {
+    color: var(--text) !important;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────── */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: var(--surface);
+}
+::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--green);
+}
+
+/* ── Info / Warning / Error boxes ──────────────────────────── */
+[data-testid="stAlert"] {
+    background-color: var(--card) !important;
+    border-radius: 8px !important;
+}
+
+/* ── Multiselect ───────────────────────────────────────────── */
+[data-testid="stMultiSelect"] span[data-baseweb="tag"] {
+    background-color: var(--surface) !important;
+    color: var(--green) !important;
+    border: 1px solid var(--green) !important;
+}
