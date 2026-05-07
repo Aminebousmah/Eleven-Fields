@@ -32,6 +32,7 @@ from data.processor import (
 try:
     from transfermarkt.matcher import (
         get_club_logo, match_club, format_value, enrich_with_logos,
+        get_squad_value_season, get_squad_demographics,
     )
     from transfermarkt.loader import load_players
     TM_AVAILABLE = True
@@ -42,11 +43,13 @@ except Exception:
     def format_value(v): return "—"
     def enrich_with_logos(df, *a, **kw): return df
     def load_players(): import pandas as _p; return _p.DataFrame()
+    def get_squad_value_season(*a, **kw): return None
+    def get_squad_demographics(*a, **kw): return pd.DataFrame()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _team_kpis(season: str, league: str | None, team: str) -> list[dict]:
+def _team_kpis(season: str, league: str | None, team: str, _season_key: str = "") -> list[dict]:
     std = load_team_season_stats("standard", [season])
     if league:
         std = std[std["league"] == league]
@@ -68,7 +71,7 @@ def _team_kpis(season: str, league: str | None, team: str) -> list[dict]:
         {"label": "CrdY",      "value": fmt(r.get("CrdY", "—"), 0),     "color": COLORS["accent_red"]},
     ]
 
-    sv = _squad_value(team, league)
+    sv = get_squad_value_season(team, _season_key or season, league)
     if sv is not None:
         kpis.insert(0, {"label": "Valeur effectif", "value": format_value(sv),
                         "color": COLORS["accent_gold"]})
@@ -98,20 +101,6 @@ def _team_header(team: str, league_label: str, season: str, league_filter: str |
             unsafe_allow_html=True,
         )
 
-
-def _squad_value(team: str, league_filter: str | None) -> float | None:
-    """Somme des valeurs marchandes des joueurs du club Transfermarkt matché."""
-    club = match_club(team, league_filter)
-    if not club:
-        return None
-    players = load_players()
-    if players.empty or "current_club_id" not in players.columns:
-        return None
-    sub = players[players["current_club_id"] == club["club_id"]]
-    if sub.empty or "market_value_in_eur" not in sub.columns:
-        return None
-    total = pd.to_numeric(sub["market_value_in_eur"], errors="coerce").sum()
-    return float(total) if total > 0 else None
 
 
 # ── Render ────────────────────────────────────────────────────────────────────
@@ -146,23 +135,29 @@ def render(season: str, league: str) -> None:
 # ── Mode Focus ────────────────────────────────────────────────────────────────
 
 def _render_focus(season: str, league: str, league_filter: str | None, league_label: str) -> None:
-    team = select_team(season, league, label="Équipe à analyser", key="team_ctx")
+    team = select_team(season, league, label="Équipe à analyser", key="team_ctx", show_preview=False)
     if not team:
         return
 
     _team_header(team, league_label, season, league_filter)
-    render_kpi_row(_team_kpis(season, league_filter, team))
+    render_kpi_row(_team_kpis(season, league_filter, team, _season_key=season))
 
     st.divider()
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab_card, tab1, tab2, tab3, tab4, tab5, tab6, tab_tm = st.tabs([
+        "🎨 Rapport visuel",
         "⚽ Radar Avec ballon",
         "🛡️ Radar Sans ballon",
         "🏅 Percentiles",
         "📊 Indices",
         "🔵 Style de jeu",
         "🔁 Équipes similaires",
+        "💶 Transfermarkt",
     ])
+
+    with tab_card:
+        from components.report_card import render_club_report_card
+        render_club_report_card(team, season, league_filter)
 
     with tab1:
         render_section_header(
@@ -220,6 +215,9 @@ def _render_focus(season: str, league: str, league_filter: str | None, league_la
 
     with tab6:
         _render_similar_teams(team, season, league_filter)
+
+    with tab_tm:
+        _render_tm_team(team, season, league_filter)
 
 
 # ── Mode Versus ───────────────────────────────────────────────────────────────
@@ -279,6 +277,190 @@ def _render_versus(season: str, league: str, league_filter: str | None, league_l
 
     with tab4:
         _render_clustering(season, league_filter, highlight=[t1, t2])
+
+
+# ── Visualisations Transfermarkt (équipe) ─────────────────────────────────────
+
+def _render_tm_team(team: str, season: str, league_filter: str | None) -> None:
+    import plotly.graph_objects as go
+    import plotly.express as px
+    from config import SEASONS, PLOTLY_LAYOUT
+
+    render_section_header(
+        "Analyse Transfermarkt de l'effectif",
+        "Valeur marchande, démographie et profil de l'effectif — données Transfermarkt.",
+    )
+
+    if not TM_AVAILABLE:
+        st.info("Module Transfermarkt non disponible.")
+        return
+
+    with st.spinner("Chargement des données Transfermarkt…"):
+        squad_df = get_squad_demographics(team, league_filter)
+
+    # ── Valeur d'effectif par saison ─────────────────────────────────────────
+    season_vals = []
+    for sk, sl in SEASONS.items():
+        sv = get_squad_value_season(team, sk, league_filter)
+        if sv is not None and sv > 0:
+            season_vals.append({"Saison": sl, "Valeur (M€)": round(sv / 1e6, 1), "_key": sk})
+
+    if season_vals:
+        render_section_header(
+            "Évolution de la valeur d'effectif",
+            "Snapshots annuels Transfermarkt (fin de saison).",
+        )
+        sv_df = pd.DataFrame(season_vals).sort_values("_key")
+        fig_sv = go.Figure()
+        fig_sv.add_trace(go.Bar(
+            x=sv_df["Saison"], y=sv_df["Valeur (M€)"],
+            marker_color=COLORS["accent_green"],
+            marker_line_width=0,
+            text=[f"{v:.0f} M€" for v in sv_df["Valeur (M€)"]],
+            textposition="outside",
+            textfont=dict(color=COLORS["text"]),
+            hovertemplate="%{x}<br><b>%{y:.0f} M€</b><extra></extra>",
+        ))
+        layout_sv = {**PLOTLY_LAYOUT}
+        layout_sv["margin"] = dict(l=20, r=20, t=20, b=40)
+        fig_sv.update_layout(
+            **layout_sv,
+            yaxis=dict(title="Valeur (M€)", gridcolor=COLORS["grid"], zeroline=False),
+            xaxis=dict(gridcolor=COLORS["grid"]),
+            height=300,
+        )
+        st.plotly_chart(fig_sv, use_container_width=True)
+
+    if squad_df.empty:
+        st.info("Aucune donnée démographique disponible pour cet effectif.")
+        return
+
+    st.divider()
+
+    # ── Joueurs les plus valorisés ────────────────────────────────────────────
+    render_section_header("Top joueurs par valeur marchande")
+
+    if "market_value_in_eur" in squad_df.columns and "name" in squad_df.columns:
+        top = (
+            squad_df[["name", "market_value_in_eur", "position"]]
+            .dropna(subset=["market_value_in_eur"])
+            .sort_values("market_value_in_eur", ascending=False)
+            .head(10)
+            .copy()
+        )
+        top["Valeur"] = top["market_value_in_eur"].apply(format_value)
+        top["Valeur (M€)"] = top["market_value_in_eur"] / 1e6
+
+        if "image_url" in squad_df.columns:
+            top = top.merge(squad_df[["name", "image_url"]], on="name", how="left")
+
+        fig_top = go.Figure(go.Bar(
+            x=top["Valeur (M€)"],
+            y=top["name"],
+            orientation="h",
+            marker_color=COLORS["accent_gold"],
+            marker_line_width=0,
+            text=top["Valeur"],
+            textposition="outside",
+            textfont=dict(color=COLORS["text"], size=10),
+            hovertemplate="%{y}<br><b>%{text}</b><extra></extra>",
+        ))
+        layout_top = {**PLOTLY_LAYOUT}
+        layout_top["margin"] = dict(l=20, r=80, t=10, b=20)
+        fig_top.update_layout(
+            **layout_top,
+            xaxis=dict(title="Valeur (M€)", gridcolor=COLORS["grid"], zeroline=False),
+            yaxis=dict(autorange="reversed"),
+            height=max(280, 35 * len(top)),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_top, use_container_width=True)
+
+    st.divider()
+
+    # ── Démographie ───────────────────────────────────────────────────────────
+    c1, c2 = st.columns(2)
+
+    with c1:
+        render_section_header("Distribution des âges")
+        if "age" in squad_df.columns:
+            ages = squad_df["age"].dropna()
+            if not ages.empty:
+                fig_age = go.Figure(go.Histogram(
+                    x=ages, nbinsx=12,
+                    marker_color=COLORS["accent_blue"], marker_line_width=0,
+                    hovertemplate="%{x} ans : %{y} joueurs<extra></extra>",
+                ))
+                layout_age = {**PLOTLY_LAYOUT}
+                layout_age["margin"] = dict(l=20, r=20, t=10, b=30)
+                fig_age.update_layout(
+                    **layout_age,
+                    yaxis=dict(gridcolor=COLORS["grid"], zeroline=False, title="Joueurs"),
+                    xaxis=dict(gridcolor=COLORS["grid"], title="Âge"),
+                    height=280,
+                )
+                avg_age = ages.mean()
+                st.plotly_chart(fig_age, use_container_width=True)
+                st.caption(f"Âge moyen : **{avg_age:.1f} ans** · {len(ages)} joueurs")
+        else:
+            st.info("Données d'âge non disponibles.")
+
+    with c2:
+        render_section_header("Nationalités (Top 8)")
+        nat_col = "country_of_citizenship" if "country_of_citizenship" in squad_df.columns else None
+        if nat_col:
+            nat = squad_df[nat_col].dropna().value_counts().head(8)
+            if not nat.empty:
+                fig_nat = go.Figure(go.Bar(
+                    x=nat.values, y=nat.index, orientation="h",
+                    marker_color=COLORS["accent_green"], marker_line_width=0,
+                    text=nat.values, textposition="outside",
+                    textfont=dict(color=COLORS["text"], size=10),
+                    hovertemplate="%{y} : %{x} joueurs<extra></extra>",
+                ))
+                layout_nat = {**PLOTLY_LAYOUT}
+                layout_nat["margin"] = dict(l=20, r=40, t=10, b=20)
+                fig_nat.update_layout(
+                    **layout_nat,
+                    xaxis=dict(gridcolor=COLORS["grid"], zeroline=False, title="Joueurs"),
+                    yaxis=dict(autorange="reversed"),
+                    height=280,
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_nat, use_container_width=True)
+        else:
+            st.info("Données de nationalité non disponibles.")
+
+    # ── Répartition par poste ─────────────────────────────────────────────────
+    if "position" in squad_df.columns:
+        render_section_header("Répartition par poste")
+        pos_counts = squad_df["position"].dropna().value_counts()
+        if not pos_counts.empty:
+            pos_colors = [
+                COLORS["accent_green"] if "keeper" in p.lower() else
+                COLORS["accent_blue"] if "back" in p.lower() else
+                COLORS["accent_gold"] if "midfield" in p.lower() else
+                COLORS["accent_red"]
+                for p in pos_counts.index
+            ]
+            fig_pos = go.Figure(go.Bar(
+                x=pos_counts.index, y=pos_counts.values,
+                marker_color=pos_colors, marker_line_width=0,
+                text=pos_counts.values, textposition="outside",
+                textfont=dict(color=COLORS["text"], size=10),
+                hovertemplate="%{x} : %{y} joueurs<extra></extra>",
+            ))
+            layout_pos = {**PLOTLY_LAYOUT}
+            layout_pos["margin"] = dict(l=20, r=20, t=10, b=60)
+            fig_pos.update_layout(
+                **layout_pos,
+                yaxis=dict(gridcolor=COLORS["grid"], zeroline=False, title="Joueurs"),
+                xaxis=dict(gridcolor=COLORS["grid"], tickangle=-30),
+                height=280, showlegend=False,
+            )
+            st.plotly_chart(fig_pos, use_container_width=True)
+
+    st.caption("📌 Sources : Transfermarkt (davidcariboo/player-scores)")
 
 
 # ── Équipes similaires ────────────────────────────────────────────────────────

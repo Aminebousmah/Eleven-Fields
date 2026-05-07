@@ -12,6 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from config import COLORS, LEAGUE_LABELS, METRIC_DEFINITIONS
+from components.flags import get_flag_url
 from components.glossary import render_metric_glossary
 from components.kpi_cards import render_section_header, render_kpi_row
 from data.loader import (
@@ -305,9 +306,17 @@ def _render_leaderboards(season: str, league_f: str | None) -> None:
     df = df.reset_index(drop=True)
     df.insert(0, "#", range(1, len(df) + 1))
 
+    # Colonne drapeau
+    if "nation" in df.columns:
+        df["flag_url"] = df["nation"].apply(
+            lambda x: get_flag_url(str(x).split()[-1], size=20) if pd.notna(x) and str(x).strip() else None
+        )
+
     cols = ["#"]
     if "image_url" in df.columns:
         cols.append("image_url")
+    if "flag_url" in df.columns:
+        cols.append("flag_url")
     cols += ["player", "team", "league", "pos", "age", col]
     if "market_value_in_eur" in df.columns:
         df["Valeur"] = df["market_value_in_eur"].apply(format_value)
@@ -315,7 +324,8 @@ def _render_leaderboards(season: str, league_f: str | None) -> None:
     cols = [c for c in cols if c in df.columns]
 
     disp = df[cols].rename(columns={
-        "image_url": "Photo", "player": "Joueur", "team": "Équipe",
+        "image_url": "Photo", "flag_url": "Pays",
+        "player": "Joueur", "team": "Équipe",
         "league": "Ligue", "pos": "Position", "age": "Âge",
         "Min": "Minutes", col: descr,
     })
@@ -325,6 +335,8 @@ def _render_leaderboards(season: str, league_f: str | None) -> None:
     column_config = {}
     if "Photo" in disp.columns:
         column_config["Photo"] = st.column_config.ImageColumn("Photo", width="small")
+    if "Pays" in disp.columns:
+        column_config["Pays"] = st.column_config.ImageColumn("Pays", width="small")
     column_config[descr] = st.column_config.NumberColumn(descr, format="%.1f")
 
     render_section_header(label, descr)
@@ -390,15 +402,22 @@ def _render_explorer(season: str, league_f: str | None) -> None:
     render_section_header(f"{len(df)} joueur(s)")
 
     df_e = _enrich_with_tm(df, "player", league_f)
+    # Colonne drapeau
+    if "nation" in df_e.columns:
+        df_e["flag_url"] = df_e["nation"].apply(
+            lambda x: get_flag_url(str(x).split()[-1], size=20) if pd.notna(x) and str(x).strip() else None
+        )
     base_cols = ["player", "team", "league", "pos", "age", "MP",
                  "Gls", "Ast", "xG", "xAG", "PrgP", "PrgC", "CrdY"]
-    extras = ["image_url"] if "image_url" in df_e.columns else []
+    extras = []
+    if "image_url" in df_e.columns: extras.append("image_url")
+    if "flag_url"  in df_e.columns: extras.append("flag_url")
     if "market_value_in_eur" in df_e.columns:
         df_e["Valeur"] = df_e["market_value_in_eur"].apply(format_value)
         base_cols = base_cols + ["Valeur"]
     show_cols = extras + [c for c in base_cols if c in df_e.columns]
     disp = df_e[show_cols].rename(columns={
-        "image_url": "Photo",
+        "image_url": "Photo", "flag_url": "Pays",
         "player": "Joueur", "team": "Équipe", "league": "Ligue",
         "pos": "Position", "age": "Âge", "MP": "J",
         "Gls": "Buts", "Ast": "Passes D.", "CrdY": "Jaunes",
@@ -407,6 +426,8 @@ def _render_explorer(season: str, league_f: str | None) -> None:
     column_config = {}
     if "Photo" in disp.columns:
         column_config["Photo"] = st.column_config.ImageColumn("Photo", width="small")
+    if "Pays" in disp.columns:
+        column_config["Pays"] = st.column_config.ImageColumn("Pays", width="small")
 
     st.dataframe(
         disp, use_container_width=True, height=560, hide_index=True,

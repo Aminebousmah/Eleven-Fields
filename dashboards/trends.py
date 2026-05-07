@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from config import COLORS, LEAGUE_LABELS, CLUSTER_NAMES, SEASONS
+from components.flags import get_flag_url
 from components.kpi_cards import render_section_header, render_kpi_row
 from components.charts import make_peer_scatter, make_bar_comparison
 from data.loader import load_team_season_stats, load_player_season_stats
@@ -140,15 +141,23 @@ def render(season: str, league: str) -> None:
             young = enrich_with_photos(young, player_col="player", league=league_f)
             young = enrich_with_logos(young, team_col="team", league=league_f)
 
+            # Colonne drapeau : URL image via flagcdn.com
+            if "nation" in young.columns:
+                young["flag_url"] = young["nation"].apply(
+                    lambda x: get_flag_url(str(x).split()[-1], size=20) if pd.notna(x) and str(x).strip() else None
+                )
+
             order = []
             if "image_url" in young.columns: order.append("image_url")
             order += ["player"]
+            if "flag_url" in young.columns: order.append("flag_url")
             if "logo_url" in young.columns: order.append("logo_url")
             order += ["team", "league", "age", "pos", "Gls", "Ast", "xG", "xAG", "impact"]
             cols = [c for c in order if c in young.columns]
 
             disp = young[cols].rename(columns={
                 "image_url": "Photo", "logo_url": "Logo",
+                "flag_url": "Pays",
                 "player": "Joueur", "team": "Équipe", "league": "Ligue",
                 "age": "Âge", "pos": "Position",
                 "Gls": "Buts", "Ast": "Passes D.",
@@ -157,6 +166,8 @@ def render(season: str, league: str) -> None:
             column_config = {}
             if "Photo" in disp.columns: column_config["Photo"] = _photo_cfg()
             if "Logo" in disp.columns: column_config["Logo"] = _logo_cfg()
+            if "Pays" in disp.columns:
+                column_config["Pays"] = st.column_config.ImageColumn("Pays", width="small")
             if "Score impact" in disp.columns:
                 column_config["Score impact"] = st.column_config.NumberColumn(
                     "Score impact", format="%.2f",

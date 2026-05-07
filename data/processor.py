@@ -380,6 +380,309 @@ def find_defensive_outliers(season: str, league: str | None = None, top_n: int =
     }
 
 
+# ── Tactical lineup detection ─────────────────────────────────────────────────
+
+_POS_TO_GROUP: dict[str, str] = {
+    "GK":  "GK",
+    "CB":  "DF", "RB":  "DF", "LB":  "DF",
+    "WB":  "DF", "RWB": "DF", "LWB": "DF",
+    "CM":  "MF", "DM":  "MF", "LM":  "MF", "RM":  "MF",
+    "AM":  "MF", "CAM": "MF", "CDM": "MF",
+    "FW":  "FW", "LW":  "FW", "RW":  "FW",
+    "CF":  "FW", "ST":  "FW", "SS":  "FW",
+}
+
+
+def _primary_pos_group(pos_str) -> str:
+    """Maps position string (possibly multi-value like 'CB,CM') to GK/DF/MF/FW."""
+    if pd.isna(pos_str):
+        return "MF"
+    primary = str(pos_str).split(",")[0].strip().upper()
+    return _POS_TO_GROUP.get(primary, "MF")
+
+
+def formation_coords(formation_str: str) -> list[tuple[str, float, float]]:
+    """
+    Returns list of (pos_group, x_pct, y_pct) for each slot in the formation.
+    Coordinates for HTML display (y: 0=top/opponent goal, 100=bottom/own goal/GK).
+    """
+    try:
+        parts = list(map(int, formation_str.split("-")))
+    except Exception:
+        parts = [4, 3, 3]
+
+    slots: list[tuple[str, float, float]] = [("GK", 50.0, 88.0)]
+
+    # Y positions: DF closest to GK (high y_pct), FW at top (low y_pct)
+    if len(parts) == 2:
+        y_vals = [70.0, 22.0]
+    elif len(parts) == 3:
+        y_vals = [70.0, 46.0, 18.0]
+    elif len(parts) == 4:
+        y_vals = [70.0, 54.0, 36.0, 14.0]
+    else:
+        step = 52.0 / max(len(parts) - 1, 1)
+        y_vals = [70.0 - i * step for i in range(len(parts))]
+
+    for i, (n, y) in enumerate(zip(parts, y_vals)):
+        pg = "DF" if i == 0 else ("FW" if i == len(parts) - 1 else "MF")
+        if n == 1:
+            xs = [50.0]
+        else:
+            margin = 8.0
+            step = (100.0 - 2 * margin) / (n - 1)
+            xs = [margin + j * step for j in range(n)]
+        for x in xs:
+            slots.append((pg, x, y))
+
+    return slots
+
+
+def get_typical_lineup(
+    team: str,
+    season: str,
+    league_filter: str | None = None,
+    n_subs: int = 7,
+) -> tuple[str, list[dict], list[dict]]:
+    """
+    Détecte la compo type d'une équipe depuis FB_lineups.csv.
+    Retourne (formation_str, starters_list, subs_list).
+    Chaque élément : {player, pos_group, primary_pos, apps, minutes,
+                      jersey_number, total_games}.
+    """
+    from data.loader import load_lineups
+
+    lin = load_lineups([season])
+    if lin.empty:
+        return "4-3-3", [], []
+
+    if league_filter:
+        lin = lin[lin["league"] == league_filter]
+
+    tlin = lin[lin["team"] == team].copy()
+    if tlin.empty:
+        return "4-3-3", [], []
+
+    # Parse is_starter
+    tlin["_starter"] = tlin["is_starter"].astype(str).str.lower().isin(["true", "1", "yes"])
+    tlin["_pos_group"] = tlin["position"].apply(_primary_pos_group)
+    tlin["_primary_pos"] = tlin["position"].apply(
+        lambda p: str(p).split(",")[0].strip() if pd.notna(p) else "MF"
+    )
+
+    starters_df = tlin[tlin["_starter"]].copy()
+    total_games = int(tlin["game"].nunique())
+
+    # ── Formation detection ───────────────────────────────────────────────────
+    def _game_formation(gdf: pd.DataFrame) -> str:
+        c = gdf["_pos_group"].value_counts()
+        return f"{c.get('DF', 0)}-{c.get('MF', 0)}-{c.get('FW', 0)}"
+
+    game_forms = starters_df.groupby("game").apply(_game_formation)
+    formation = game_forms.mode().iloc[0] if not game_forms.empty else "4-3-3"
+
+    # ── Jersey numbers (most common per player) ───────────────────────────────
+    if "jersey_number" in tlin.columns:
+        def _mode_int(s: pd.Series) -> int:
+            m = pd.to_numeric(s, errors="coerce").dropna()
+            return int(m.mode().iloc[0]) if not m.empty else 0
+        jersey_map: dict = tlin.groupby("player")["jersey_number"].agg(_mode_int).to_dict()
+    else:
+        jersey_map = {}
+
+    # ── Aggregate starters by position ────────────────────────────────────────
+    starter_agg = (
+        starters_df.groupby(["player", "_pos_group", "_primary_pos"])
+        .agg(apps=("game", "count"), minutes=("minutes_played", "sum"))
+        .reset_index()
+        .sort_values("apps", ascending=False)
+    )
+    starter_agg["jersey_number"] = starter_agg["player"].map(jersey_map).fillna(0).astype(int)
+
+    try:
+        parts = list(map(int, formation.split("-")))
+        n_df, n_mf, n_fw = parts[0], parts[1], parts[2]
+    except Exception:
+        n_df, n_mf, n_fw = 4, 3, 3
+
+    result_starters: list[dict] = []
+    used: set[str] = set()
+
+    def _add_group(pg: str, n: int) -> None:
+        rows = starter_agg[starter_agg["_pos_group"] == pg]
+        added = 0
+        for _, r in rows.iterrows():
+            if added >= n:
+                break
+            if r["player"] not in used:
+                result_starters.append({
+                    "player": r["player"],
+                    "pos_group": pg,
+                    "primary_pos": r["_primary_pos"],
+                    "apps": int(r["apps"]),
+                    "minutes": float(r["minutes"]),
+                    "jersey_number": int(r["jersey_number"]),
+                    "total_games": total_games,
+                })
+                used.add(r["player"])
+                added += 1
+
+    _add_group("GK", 1)
+    _add_group("DF", n_df)
+    _add_group("MF", n_mf)
+    _add_group("FW", n_fw)
+
+    # ── Subs: most used players not in starters ───────────────────────────────
+    all_agg = (
+        tlin.groupby(["player", "_pos_group", "_primary_pos"])
+        .agg(apps=("game", "count"), minutes=("minutes_played", "sum"))
+        .reset_index()
+        .sort_values("apps", ascending=False)
+    )
+    all_agg["jersey_number"] = all_agg["player"].map(jersey_map).fillna(0).astype(int)
+
+    result_subs: list[dict] = []
+    for _, r in all_agg.iterrows():
+        if len(result_subs) >= n_subs:
+            break
+        if r["player"] not in used:
+            result_subs.append({
+                "player": r["player"],
+                "pos_group": r["_pos_group"],
+                "primary_pos": r["_primary_pos"],
+                "apps": int(r["apps"]),
+                "minutes": float(r["minutes"]),
+                "jersey_number": int(r["jersey_number"]),
+                "total_games": total_games,
+            })
+            used.add(r["player"])
+
+    return formation, result_starters, result_subs
+
+
+def get_squad_with_positions(
+    team: str,
+    season: str,
+    league_filter: str | None = None,
+    min_minutes: int = 200,
+) -> pd.DataFrame:
+    """
+    Retourne les joueurs de l'effectif ayant joué ≥ min_minutes au total.
+    Position principale = celle où ils ont passé le plus de minutes.
+
+    Colonnes : player, pos, pos_group, appearances, minutes, jersey
+    """
+    from data.loader import load_lineups
+
+    lin = load_lineups([season])
+    if lin.empty:
+        return pd.DataFrame()
+    if league_filter:
+        lin = lin[lin["league"] == league_filter]
+    tlin = lin[lin["team"] == team].copy()
+    if tlin.empty:
+        return pd.DataFrame()
+
+    tlin["_ppos"] = tlin["position"].apply(
+        lambda p: str(p).split(",")[0].strip().upper()
+        if pd.notna(p) and str(p).strip() else "MF"
+    )
+    tlin["_min"] = pd.to_numeric(tlin["minutes_played"], errors="coerce").fillna(0)
+
+    rows = []
+    for player, pdata in tlin.groupby("player"):
+        total_min = float(pdata["_min"].sum())
+        if total_min < min_minutes:
+            continue  # filtre < 200 min
+
+        # Position principale = celle avec le plus de minutes cumulées
+        pos_min = pdata.groupby("_ppos")["_min"].sum()
+        ppos = pos_min.idxmax()
+        appearances = int((pdata["_ppos"] == ppos).sum())
+
+        jersey = ""
+        if "jersey_number" in pdata.columns:
+            jnums = pdata["jersey_number"].dropna()
+            if not jnums.empty:
+                try:
+                    jersey = str(int(float(jnums.mode().iloc[0])))
+                except Exception:
+                    jersey = str(jnums.iloc[0])
+
+        rows.append({
+            "player":      player,
+            "pos":         ppos,
+            "appearances": appearances,
+            "minutes":     round(total_min),
+            "jersey":      jersey,
+        })
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    df["pos_group"] = df["pos"].apply(_primary_pos_group)
+
+    # Rang de chaque joueur à sa position (1 = le plus de minutes)
+    df["rank_at_pos"] = df.groupby("pos")["minutes"].rank(
+        ascending=False, method="min"
+    ).astype(int)
+
+    return df.sort_values(
+        ["pos_group", "pos", "minutes"], ascending=[True, True, False]
+    ).reset_index(drop=True)
+
+
+def squad_pos_to_xy(
+    pos: str,
+    idx_within_pos: int,
+    total_at_pos: int,
+) -> tuple[float, float]:
+    """
+    Mappe un poste à des coordonnées (x%, y%) sur un terrain horizontal.
+    x=0 = but de gauche (GK), x=100 = but de droite (attaquants).
+    y=0 = haut, y=100 = bas.
+    """
+    # Base (x, y) par sous-poste
+    bases: dict[str, tuple[float, float]] = {
+        "GK":  (5.0, 50.0),
+        # Défenseurs
+        "CB":  (22.0, 50.0),
+        "SW":  (22.0, 50.0),
+        "LB":  (20.0, 18.0),
+        "LWB": (20.0, 12.0),
+        "RB":  (20.0, 82.0),
+        "RWB": (20.0, 88.0),
+        # Milieux
+        "CDM": (37.0, 50.0),
+        "DM":  (37.0, 50.0),
+        "LM":  (47.0, 15.0),
+        "CM":  (47.0, 50.0),
+        "RM":  (47.0, 85.0),
+        "CAM": (60.0, 50.0),
+        "AM":  (60.0, 50.0),
+        # Attaquants
+        "LW":  (72.0, 15.0),
+        "LF":  (72.0, 15.0),
+        "RW":  (72.0, 85.0),
+        "RF":  (72.0, 85.0),
+        "CF":  (78.0, 50.0),
+        "ST":  (78.0, 50.0),
+        "SS":  (76.0, 50.0),
+        "FW":  (76.0, 50.0),
+    }
+    bx, by = bases.get(pos.upper(), (50.0, 50.0))
+
+    if total_at_pos == 1:
+        return bx, by
+
+    # Étalement vertical autour de la base
+    spread = min(28.0, total_at_pos * 7.0)
+    step = spread / max(total_at_pos - 1, 1)
+    offset = -spread / 2.0 + idx_within_pos * step
+    return bx, max(6.0, min(94.0, by + offset))
+
+
 def find_young_stars(
     season: str,
     league: str | None = None,

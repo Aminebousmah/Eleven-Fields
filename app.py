@@ -40,6 +40,7 @@ NAV_ITEMS = [
     ("📅", "Analyse Match"),
     ("⚖️", "Comparaison"),
     ("🧩", "Composition"),
+    ("📰", "Intelligence Médias"),
     ("🗂️", "Couverture"),
 ]
 
@@ -128,6 +129,10 @@ def router(page: str, season: str, league: str) -> None:
         render(season=season, league=league)
 
     elif page == NAV_LABELS[8]:
+        from dashboards.media_intel import render
+        render(season=season, league=league)
+
+    elif page == NAV_LABELS[9]:
         from dashboards.coverage import render
         render()
 
