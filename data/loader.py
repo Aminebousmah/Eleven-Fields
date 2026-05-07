@@ -252,3 +252,18 @@ def load_fm_match_stats() -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
     return _numeric(_parse_flat_csv(path))
+
+
+@st.cache_data(show_spinner=False)
+def load_lineups(seasons: Optional[list[str]] = None) -> pd.DataFrame:
+    """Charge les compositions match (FB_lineups.csv) — en-tête plat."""
+    if seasons is None:
+        seasons = list(SEASONS.keys())
+    frames: list[pd.DataFrame] = []
+    for s in seasons:
+        path = DATA_DIR / s / "FB_lineups.csv"
+        if path.exists():
+            df = _parse_flat_csv(path)
+            df["season_key"] = s
+            frames.append(df)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()

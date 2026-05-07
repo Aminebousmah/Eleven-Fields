@@ -1,3 +1,6 @@
+# ── Intelligence Médias (cache local, ne pas committer) ─────────────────────
+media/cache.json
+
 # ── Python ──────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]

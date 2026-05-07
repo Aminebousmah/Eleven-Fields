@@ -95,6 +95,82 @@ def load_player_valuations(latest_only: bool = True) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+# Date de fin de chaque saison Big 5 (fin mai = dernier snapshot avant mercato estival)
+SEASON_END_DATES: dict[str, str] = {
+    "2122": "2022-05-31",
+    "2223": "2023-05-31",
+    "2324": "2024-05-31",
+    "2425": "2025-05-31",
+    "2526": "2026-05-31",
+}
+
+
+@st.cache_data(show_spinner=False)
+def load_player_valuations_for_season(season: str) -> pd.DataFrame:
+    """
+    Snapshot des valeurs marchandes à la fin de la saison `season`.
+    Pour chaque joueur, retourne le snapshot dont la date est la plus récente
+    ≤ fin de saison (SEASON_END_DATES). Filtre sur les Big 5.
+
+    Colonnes retournées : player_id, date, market_value_in_eur, current_club_id,
+                          player_club_domestic_competition_id.
+    """
+    if not _csv_exists("player_valuations.csv"):
+        return pd.DataFrame()
+
+    end_date_str = SEASON_END_DATES.get(season)
+    if not end_date_str:
+        # Saison inconnue → snapshot le plus récent disponible
+        return load_player_valuations(latest_only=True)
+
+    end_date = pd.Timestamp(end_date_str)
+
+    df = pd.read_csv(DATA_DIR / "player_valuations.csv")
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"])
+
+    # Filtre Big 5
+    df = df[df["player_club_domestic_competition_id"].isin(BIG5_COMPETITION_IDS)]
+
+    # Snapshots <= fin de saison
+    df_before = df[df["date"] <= end_date]
+
+    if df_before.empty:
+        return pd.DataFrame()
+
+    # Pour chaque joueur : snapshot le plus récent ≤ fin de saison
+    snapshot = (
+        df_before.sort_values("date")
+        .groupby("player_id", as_index=False)
+        .last()
+    )
+    return snapshot.reset_index(drop=True)
+
+
+@st.cache_data(show_spinner=False)
+def load_appearances() -> pd.DataFrame:
+    """
+    Historique des apparitions des joueurs (appearances.csv).
+    ~1.86M lignes : player_id, player_club_id, date, goals, assists, minutes_played, ...
+    """
+    if not _csv_exists("appearances.csv"):
+        return pd.DataFrame()
+    df = pd.read_csv(DATA_DIR / "appearances.csv")
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    return df
+
+
+@st.cache_data(show_spinner=False)
+def load_games() -> pd.DataFrame:
+    """Calendrier TM des matchs (games.csv)."""
+    if not _csv_exists("games.csv"):
+        return pd.DataFrame()
+    df = pd.read_csv(DATA_DIR / "games.csv")
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    return df
+
+
 def fbref_league_to_tm(league: Optional[str]) -> Optional[str]:
     """ENG-Premier League → GB1."""
     if not league or league == "Toutes les ligues":

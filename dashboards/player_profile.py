@@ -18,6 +18,7 @@ from components.glossary import (
     render_metric_glossary, render_disclaimer, render_watchlist_button,
     watchlist_get,
 )
+from components.flags import flag_img_html
 from components.kpi_cards import render_kpi_row, render_section_header
 from data.loader import load_player_season_stats
 from data.processor import (
@@ -31,6 +32,8 @@ try:
     from transfermarkt.matcher import (
         match_player, format_value, get_club_logo,
         enrich_with_photos, enrich_with_logos,
+        get_player_value_season,
+        get_player_value_history, get_player_career_history,
     )
     TM_AVAILABLE = True
 except Exception:
@@ -40,6 +43,9 @@ except Exception:
     def get_club_logo(*a, **kw): return None
     def enrich_with_photos(df, *a, **kw): return df
     def enrich_with_logos(df, *a, **kw): return df
+    def get_player_value_season(*a, **kw): return None
+    def get_player_value_history(*a, **kw): return pd.DataFrame()
+    def get_player_career_history(*a, **kw): return pd.DataFrame()
 
 
 # ── Render ────────────────────────────────────────────────────────────────────
@@ -55,7 +61,7 @@ def render(season: str, league: str) -> None:
         unsafe_allow_html=True,
     )
 
-    player, team, pos_group = select_player(season, league, key_prefix="player")
+    player, team, pos_group = select_player(season, league, key_prefix="player", show_preview=False)
     if not player:
         return
 
@@ -75,12 +81,14 @@ def render(season: str, league: str) -> None:
         except Exception:
             return "—"
 
-    # ── Match Transfermarkt (photo + valeur) ─────────────────────────────────
+    # ── Match Transfermarkt (photo + valeur historique) ──────────────────────
     tm = match_player(player, fbref_league=league_filter)
     photo_url = tm.get("image_url") if tm else None
-    market_value = tm.get("market_value_in_eur") if tm else None
+    # Valeur historique à la fin de la saison sélectionnée
+    market_value = get_player_value_season(player, season, league_filter)
     nation = (r.get("nation") or "").split()[-1] if pd.notna(r.get("nation")) else ""
     foot = tm.get("foot") if tm else ""
+    flag_html = flag_img_html(nation, size=18) if nation else ""
 
     # ── En-tête joueur (avec photo si dispo) ─────────────────────────────────
     h1, h2 = st.columns([1, 5]) if photo_url else (None, None)
@@ -88,31 +96,36 @@ def render(season: str, league: str) -> None:
         with h1:
             st.image(photo_url, width=110)
         with h2:
+            _nation_part = (
+                " &nbsp;·&nbsp; " + flag_html + "&nbsp;" + nation
+                if nation else ""
+            )
+            _foot_part = f" &nbsp;·&nbsp; pied {foot}" if foot else ""
             st.markdown(
-                f"""
-<div style="padding:4px 0">
-  <div style="font-size:1.7rem;font-weight:800;color:{COLORS['text']}">{player}</div>
-  <div style="font-size:0.9rem;color:{COLORS['text_muted']};margin-top:4px">
-    {team} · {r.get('pos','—')} · {r.get('age','—')} ans
-    {f"· {nation}" if nation else ""}{f" · pied {foot}" if foot else ""}
-  </div>
-  <div style="font-size:0.8rem;color:{COLORS['text_muted']};margin-top:2px">
-    {league_label} · {season}
-  </div>
-</div>
-""",
+                "<div style='padding:4px 0'>"
+                "<div style='font-size:1.7rem;font-weight:800;color:" + COLORS["text"] + "'>" + player + "</div>"
+                "<div style='font-size:0.9rem;color:" + COLORS["text_muted"] + ";margin-top:4px'>"
+                + team + " &nbsp;·&nbsp; " + str(r.get("pos", "—")) + " &nbsp;·&nbsp; " + str(r.get("age", "—")) + " ans"
+                + _nation_part + _foot_part
+                + "</div>"
+                "<div style='font-size:0.8rem;color:" + COLORS["text_muted"] + ";margin-top:2px'>"
+                + league_label + " &nbsp;·&nbsp; " + season
+                + "</div></div>",
                 unsafe_allow_html=True,
             )
     else:
+        _nation_part2 = (
+            " &nbsp;·&nbsp; " + flag_html + "&nbsp;" + nation
+            if nation else ""
+        )
         st.markdown(
-            f"""
-<div style="padding:8px 0 4px 0">
-  <div style="font-size:1.6rem;font-weight:800;color:{COLORS['text']}">{player}</div>
-  <div style="font-size:0.85rem;color:{COLORS['text_muted']};margin-top:2px">
-    {team} · {r.get('pos','—')} · {r.get('age','—')} ans · {league_label} · {season}
-  </div>
-</div>
-""",
+            "<div style='padding:8px 0 4px 0'>"
+            "<div style='font-size:1.6rem;font-weight:800;color:" + COLORS["text"] + "'>" + player + "</div>"
+            "<div style='font-size:0.85rem;color:" + COLORS["text_muted"] + ";margin-top:2px'>"
+            + team + " &nbsp;·&nbsp; " + str(r.get("pos", "—")) + " &nbsp;·&nbsp; " + str(r.get("age", "—")) + " ans"
+            + _nation_part2
+            + " &nbsp;·&nbsp; " + league_label + " &nbsp;·&nbsp; " + season
+            + "</div></div>",
             unsafe_allow_html=True,
         )
 
@@ -133,19 +146,25 @@ def render(season: str, league: str) -> None:
     # Bouton watchlist juste sous le header
     render_watchlist_button(player, team, season, league, pos=pos_group)
 
-    tab0, tab1, tab2, tab3, tab4, tab_evo, tab_sl, tab_exp = st.tabs([
+    tab0, tab_card, tab1, tab2, tab3, tab4, tab_evo, tab_tm, tab_sl, tab_exp = st.tabs([
         "📊 Indice Data'Scout",
+        "🎨 Rapport visuel",
         "🎯 Radar contextualisé",
         "🏅 Percentiles",
         "📋 Stats complètes",
         "🔁 Joueurs similaires",
         "📈 Évolution multi-saisons",
+        "💶 Transfermarkt",
         "🎯 vs Ma shortlist",
         "📄 Export rapport",
     ])
 
     with tab0:
         _render_profile_index(player, team, pos_group, season, league_filter)
+
+    with tab_card:
+        from components.report_card import render_player_report_card
+        render_player_report_card(player, team, pos_group, season, league_filter)
 
     metrics = PLAYER_METRICS_BY_POS.get(pos_group, PLAYER_METRICS_BY_POS["MF"])
 
@@ -281,6 +300,9 @@ def render(season: str, league: str) -> None:
 
     with tab_evo:
         _render_evolution(player, team, pos_group, league_filter)
+
+    with tab_tm:
+        _render_tm_player(player, league_filter)
 
     with tab_sl:
         _render_vs_shortlist(player, team, season, league_filter)
@@ -454,6 +476,97 @@ def _render_evolution(player: str, team: str, pos_group: str,
     )}
     st.dataframe(pivot, hide_index=True, use_container_width=True,
                  column_config=cfg)
+
+
+# ── Visualisations Transfermarkt ──────────────────────────────────────────────
+
+def _render_tm_player(player: str, league_filter: str | None) -> None:
+    import plotly.graph_objects as go
+
+    render_section_header(
+        "Évolution de la valeur marchande",
+        "Données Transfermarkt — valeur marchande en M€ au fil du temps.",
+    )
+
+    if not TM_AVAILABLE:
+        st.info("Module Transfermarkt non disponible.")
+        return
+
+    with st.spinner("Chargement des données Transfermarkt…"):
+        vh = get_player_value_history(player, fbref_league=league_filter)
+        career = get_player_career_history(player, fbref_league=league_filter)
+
+    # ── Graphique valeur marchande ────────────────────────────────────────────
+    if not vh.empty:
+        vh["val_m"] = vh["market_value_in_eur"] / 1e6
+        peak = vh["val_m"].max()
+        peak_date = vh.loc[vh["val_m"].idxmax(), "date"]
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=vh["date"], y=vh["val_m"],
+            mode="lines+markers",
+            line=dict(color=COLORS["accent_green"], width=2.5),
+            marker=dict(size=6, color=COLORS["accent_green"],
+                        line=dict(color="#fff", width=1)),
+            fill="tozeroy",
+            fillcolor="rgba(34,197,94,0.12)",
+            hovertemplate="%{x|%b %Y}<br><b>%{y:.1f} M€</b><extra></extra>",
+        ))
+        # Peak annotation
+        fig.add_annotation(
+            x=peak_date, y=peak,
+            text=f"Pic : {peak:.1f} M€",
+            showarrow=True, arrowhead=2,
+            arrowcolor=COLORS["accent_gold"],
+            font=dict(color=COLORS["accent_gold"], size=11),
+            bgcolor=COLORS["card"], bordercolor=COLORS["accent_gold"],
+            ax=0, ay=-30,
+        )
+
+        layout = {**PLOTLY_LAYOUT}
+        layout["margin"] = dict(l=20, r=20, t=30, b=40)
+        fig.update_layout(
+            **layout,
+            yaxis=dict(title="Valeur marchande (M€)", gridcolor=COLORS["grid"],
+                       zeroline=False, tickformat=".1f"),
+            xaxis=dict(gridcolor=COLORS["grid"]),
+            height=360,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Mini KPIs
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Valeur actuelle", f"{vh['val_m'].iloc[-1]:.1f} M€")
+        with c2:
+            st.metric("Valeur maximale", f"{peak:.1f} M€")
+        with c3:
+            first_val = vh["val_m"].iloc[0]
+            last_val = vh["val_m"].iloc[-1]
+            delta = last_val - first_val
+            sign = "+" if delta >= 0 else ""
+            st.metric("Évolution totale", f"{sign}{delta:.1f} M€")
+    else:
+        st.info("Aucune donnée d'évolution de valeur disponible pour ce joueur.")
+
+    st.divider()
+    render_section_header(
+        "Historique de carrière",
+        "Matchs, buts et assists par club et saison.",
+    )
+
+    # ── Tableau carrière ──────────────────────────────────────────────────────
+    if not career.empty:
+        career["Minutes"] = career["Minutes"].apply(
+            lambda v: f"{int(v):,}".replace(",", " ") if pd.notna(v) else "—"
+        )
+        st.dataframe(
+            career, hide_index=True, use_container_width=True,
+            height=min(48 * len(career) + 60, 600),
+        )
+    else:
+        st.info("Aucun historique de carrière disponible.")
 
 
 # ── Comparaison vs Ma shortlist ──────────────────────────────────────────────

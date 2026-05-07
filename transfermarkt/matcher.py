@@ -16,11 +16,19 @@ import unicodedata
 from functools import lru_cache
 from typing import Optional
 
+# unidecode — normalisation agressive (ø→o, ñ→n, ü→u, æ→ae…)
+try:
+    from unidecode import unidecode as _unidecode
+    _HAS_UNIDECODE = True
+except ImportError:
+    _HAS_UNIDECODE = False
+
 import pandas as pd
 import streamlit as st
 
 from transfermarkt.loader import (
     load_clubs, load_players, fbref_league_to_tm,
+    load_player_valuations_for_season,
 )
 
 MATCH_THRESHOLD = 82  # score rapidfuzz pour match_player/match_club (1 à 1)
@@ -98,7 +106,10 @@ _TEAM_ALIASES_FBREF_TO_TM: dict[str, str] = {
     "leganes":                "cd leganes",
     # Ligue 1
     "paris s g":              "paris saint germain",
+    "paris s-g":              "paris saint germain",
     "paris sg":               "paris saint germain",
+    "psg":                    "paris saint germain",
+    "paris saint germain fc": "paris saint germain",
     "lyon":                   "olympique lyon",
     "olympique lyonnais":     "olympique lyon",
     "marseille":              "olympique marseille",
@@ -124,21 +135,32 @@ _TEAM_ALIASES_FBREF_TO_TM: dict[str, str] = {
 
 def _normalize(s: str) -> str:
     """
-    Lowercase + retire accents + remplace apostrophes/tirets/points par espace
-    + collapse les espaces multiples. Bien plus tolérant aux variations FBref/TM.
+    Normalisation agressive accent-insensitive :
+    - unidecode si dispo (ø→o, ñ→n, ü→u, œ→oe, æ→ae, etc.)
+    - fallback NFKd sinon
+    - lowercase, suppression apostrophes, ponctuation → espace, collapse.
     """
-    if pd.isna(s) or s is None:
+    if s is None:
         return ""
-    nfkd = unicodedata.normalize("NFKD", str(s))
-    s = "".join(c for c in nfkd if not unicodedata.combining(c))
-    s = s.lower()
-    # Apostrophes (droits, courbes, dos)
-    s = re.sub(r"['`’´‘]", "", s)
-    # Tirets, points, virgules, slashs, &, parenthèses
-    s = re.sub(r"[\-\.\,\&/()]", " ", s)
-    # Collapse spaces
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+    try:
+        if pd.isna(s):
+            return ""
+    except Exception:
+        pass
+    raw = str(s)
+    if _HAS_UNIDECODE:
+        raw = _unidecode(raw)
+    else:
+        nfkd = unicodedata.normalize("NFKD", raw)
+        raw = "".join(c for c in nfkd if not unicodedata.combining(c))
+    raw = raw.lower()
+    # Apostrophes (droits, courbes, dos, backtick)
+    raw = re.sub(r"[‘’`´’]", "", raw)
+    # Tirets, points, virgules, slashs, &, parenthèses, deux-points
+    raw = re.sub(r"[\-\.\,\&/()\:]", " ", raw)
+    # Collapse espaces
+    raw = re.sub(r"\s+", " ", raw).strip()
+    return raw
 
 
 def _normalize_team(s: str) -> str:
@@ -217,7 +239,8 @@ def match_club(fbref_team: str, fbref_league: Optional[str] = None) -> Optional[
     if df.empty:
         return None
 
-    target = _normalize(fbref_team)
+    # Utilise _normalize_team pour appliquer la table d'alias FBref→TM
+    target = _normalize_team(fbref_team)
     res = process.extractOne(target, df["_norm"].tolist(), scorer=fuzz.WRatio,
                              score_cutoff=MATCH_THRESHOLD)
     if not res:
@@ -228,6 +251,217 @@ def match_club(fbref_team: str, fbref_league: Optional[str] = None) -> Optional[
             return None
     _, score, idx = res
     return df.iloc[idx].to_dict()
+
+
+# ── Valeurs marchandes historiques ────────────────────────────────────────────
+
+def get_player_value_season(
+    fbref_name: str,
+    season: str,
+    fbref_league: Optional[str] = None,
+) -> Optional[float]:
+    """
+    Retourne la valeur marchande du joueur à la fin de `season` (snapshot TM
+    le plus proche de la fin de saison ≤ SEASON_END_DATES[season]).
+    Fallback sur la valeur actuelle si aucun historique disponible.
+    """
+    tm = match_player(fbref_name, fbref_league=fbref_league)
+    if not tm:
+        return None
+    player_id = tm.get("player_id")
+    if player_id is None:
+        return None
+
+    try:
+        snap = load_player_valuations_for_season(season)
+        if not snap.empty and "player_id" in snap.columns:
+            row = snap[snap["player_id"] == player_id]
+            if not row.empty:
+                val = pd.to_numeric(row["market_value_in_eur"].values[0], errors="coerce")
+                if pd.notna(val):
+                    return float(val)
+    except Exception:
+        pass
+
+    # Fallback : valeur courante
+    v = tm.get("market_value_in_eur")
+    return float(v) if v is not None and pd.notna(v) else None
+
+
+def get_squad_value_season(
+    fbref_team: str,
+    season: str,
+    fbref_league: Optional[str] = None,
+) -> Optional[float]:
+    """
+    Valeur d'effectif du club à la fin de `season` : somme des valeurs TM
+    de tous les joueurs dont le snapshot fin-de-saison pointe vers ce club.
+    Fallback sur le calcul actuel si l'historique est vide.
+    """
+    club = match_club(fbref_team, fbref_league)
+    if not club:
+        return None
+    club_id = club.get("club_id")
+    if club_id is None:
+        return None
+
+    try:
+        snap = load_player_valuations_for_season(season)
+        if not snap.empty and "current_club_id" in snap.columns:
+            sub = snap[snap["current_club_id"] == club_id]
+            if not sub.empty and "market_value_in_eur" in sub.columns:
+                total = pd.to_numeric(sub["market_value_in_eur"], errors="coerce").sum()
+                if total > 0:
+                    return float(total)
+    except Exception:
+        pass
+
+    # Fallback : calcul depuis players.csv (valeur courante)
+    try:
+        from transfermarkt.loader import load_players
+        players = load_players()
+        if not players.empty and "current_club_id" in players.columns:
+            sub = players[players["current_club_id"] == club_id]
+            if not sub.empty and "market_value_in_eur" in sub.columns:
+                total = pd.to_numeric(sub["market_value_in_eur"], errors="coerce").sum()
+                return float(total) if total > 0 else None
+    except Exception:
+        pass
+    return None
+
+
+# ── Historique valeur marchande joueur ───────────────────────────────────────
+
+def get_player_value_history(
+    fbref_name: str,
+    fbref_league: Optional[str] = None,
+) -> "pd.DataFrame":
+    """
+    Retourne l'historique complet des valeurs marchandes d'un joueur.
+    Colonnes : date, market_value_in_eur.
+    DataFrame vide si le joueur n'est pas trouvé ou si les données sont absentes.
+    """
+    try:
+        from transfermarkt.loader import load_player_valuations
+        tm = match_player(fbref_name, fbref_league=fbref_league)
+        if not tm:
+            return pd.DataFrame()
+        player_id = tm.get("player_id")
+        if player_id is None:
+            return pd.DataFrame()
+        all_vals = load_player_valuations(latest_only=False)
+        if all_vals.empty or "player_id" not in all_vals.columns:
+            return pd.DataFrame()
+        pv = all_vals[all_vals["player_id"] == player_id].copy()
+        pv = pv.dropna(subset=["date"])
+        if "market_value_in_eur" not in pv.columns:
+            return pd.DataFrame()
+        pv["market_value_in_eur"] = pd.to_numeric(pv["market_value_in_eur"], errors="coerce")
+        pv = pv.dropna(subset=["market_value_in_eur"])
+        pv = pv.sort_values("date").reset_index(drop=True)
+        return pv[["date", "market_value_in_eur"]]
+    except Exception:
+        return pd.DataFrame()
+
+
+def get_player_career_history(
+    fbref_name: str,
+    fbref_league: Optional[str] = None,
+) -> "pd.DataFrame":
+    """
+    Retourne l'historique de carrière d'un joueur depuis appearances.csv + clubs.csv.
+    Colonnes : Saison, Club, Matchs, Buts, Passes D., Minutes.
+    """
+    try:
+        from transfermarkt.loader import load_appearances, load_clubs
+        tm = match_player(fbref_name, fbref_league=fbref_league)
+        if not tm:
+            return pd.DataFrame()
+        player_id = tm.get("player_id")
+        if player_id is None:
+            return pd.DataFrame()
+        apps = load_appearances()
+        if apps.empty or "player_id" not in apps.columns:
+            return pd.DataFrame()
+        paps = apps[apps["player_id"] == player_id].copy()
+        if paps.empty:
+            return pd.DataFrame()
+
+        # Club names
+        clubs_df = load_clubs()
+        club_map: dict = {}
+        if not clubs_df.empty and "club_id" in clubs_df.columns and "name" in clubs_df.columns:
+            club_map = clubs_df.set_index("club_id")["name"].to_dict()
+
+        # Season year from date
+        paps = paps.dropna(subset=["date"])
+        paps["year"] = paps["date"].dt.year
+        paps["month"] = paps["date"].dt.month
+        paps["season_year"] = paps.apply(
+            lambda r: r["year"] if r["month"] >= 8 else r["year"] - 1, axis=1
+        )
+
+        # Aggregate
+        agg = paps.groupby(["player_club_id", "season_year"]).agg(
+            games=("appearance_id", "count"),
+            goals=("goals", "sum"),
+            assists=("assists", "sum"),
+            minutes=("minutes_played", "sum"),
+        ).reset_index()
+
+        agg["Club"] = agg["player_club_id"].map(club_map).fillna(
+            agg["player_club_id"].astype(str)
+        )
+        agg["Saison"] = agg["season_year"].apply(
+            lambda y: f"{y}/{str(y + 1)[-2:]}"
+        )
+        agg = agg.sort_values("season_year", ascending=False).reset_index(drop=True)
+        return agg[["Saison", "Club", "games", "goals", "assists", "minutes"]].rename(
+            columns={
+                "games": "Matchs", "goals": "Buts",
+                "assists": "Passes D.", "minutes": "Minutes",
+            }
+        )
+    except Exception:
+        return pd.DataFrame()
+
+
+def get_squad_demographics(
+    fbref_team: str,
+    fbref_league: Optional[str] = None,
+) -> "pd.DataFrame":
+    """
+    Retourne le DataFrame des joueurs de l'effectif avec age, nationalité,
+    poste et valeur marchande. Vide si club non trouvé.
+    """
+    try:
+        from transfermarkt.loader import load_players
+        club = match_club(fbref_team, fbref_league)
+        if not club:
+            return pd.DataFrame()
+        club_id = club.get("club_id")
+        if club_id is None:
+            return pd.DataFrame()
+        players_df = load_players()
+        if players_df.empty or "current_club_id" not in players_df.columns:
+            return pd.DataFrame()
+        squad = players_df[players_df["current_club_id"] == club_id].copy()
+        if squad.empty:
+            return pd.DataFrame()
+        # Age from date_of_birth
+        if "date_of_birth" in squad.columns:
+            dob = pd.to_datetime(squad["date_of_birth"], errors="coerce")
+            today = pd.Timestamp.now()
+            squad["age"] = ((today - dob).dt.days / 365.25).apply(
+                lambda x: int(x) if pd.notna(x) and x > 0 else None
+            )
+        if "market_value_in_eur" in squad.columns:
+            squad["market_value_in_eur"] = pd.to_numeric(
+                squad["market_value_in_eur"], errors="coerce"
+            )
+        return squad.reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
 
 
 # ── Helpers d'usage rapide pour l'UI ──────────────────────────────────────────
