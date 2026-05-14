@@ -30,7 +30,7 @@ CATEGORIES = {
 SD_19_OK = {
     "FB_team_season_stats_": {"standard", "keeper", "shooting", "playing_time", "misc"},
     "FB_player_season_stats_": {"standard", "keeper", "shooting", "playing_time", "misc"},
-    "FB_team_match_stats_":   {"schedule", "shooting", "keeper", "misc"},
+    "FB_team_match_stats_":   {"shooting", "keeper", "misc"},
     "FB_player_match_stats_": {"summary", "keepers"},
 }
 
@@ -138,7 +138,7 @@ def render() -> None:
         f"<code>pip install \"soccerdata==1.8.7\"</code>)<br/>"
         f"<b>Méthodes FBref disponibles (1.9.0)</b> · "
         f"<code>read_team_season_stats</code> (standard, keeper, shooting, playing_time, misc) · "
-        f"<code>read_team_match_stats</code> (schedule, shooting, keeper, misc) · "
+        f"<code>read_team_match_stats</code> (shooting, keeper, misc) · "
         f"<code>read_player_season_stats</code> (standard, keeper, shooting, playing_time, misc) · "
         f"<code>read_player_match_stats</code> (summary, keepers) · "
         f"<code>read_schedule</code> · <code>read_lineup</code> · <code>read_events</code>"

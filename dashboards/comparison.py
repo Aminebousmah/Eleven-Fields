@@ -61,6 +61,14 @@ def _player_card(player: str, team: str, league_filter: str | None) -> None:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _available_ppm_seasons() -> list[str]:
+    """Saisons disponibles dans playing_time, les plus récentes en premier."""
+    df = load_team_season_stats("playing_time")
+    if df.empty or "season" not in df.columns:
+        return []
+    return list(reversed(sorted(df["season"].dropna().unique().tolist())))
+
+
 def _pos_group(pos_str: str) -> str:
     if pd.isna(pos_str):
         return "MF"
@@ -362,9 +370,7 @@ def render(season: str, league: str) -> None:
             "XGBoost entraîné sur les saisons passées, prédit le PPM de la saison courante.",
         )
 
-        target_season = st.selectbox("Saison à prédire", list(
-            reversed([s for s in (load_team_season_stats("playing_time")["season"].dropna().unique() if not load_team_season_stats("playing_time").empty else [])])
-        ), key="ppm_season")
+        target_season = st.selectbox("Saison à prédire", _available_ppm_seasons(), key="ppm_season")
 
         if st.button("Lancer la prédiction PPM", key="ppm_btn"):
             with st.spinner("Entraînement XGBoost…"):

@@ -103,3 +103,7 @@ logs/
 tmp/
 pip-log.txt
 pip-delete-this-directory.txt
+
+# ── Backups du scraper (créés automatiquement par --force) ──────────────────
+*.csv.bak
+*.csv.bak.*
