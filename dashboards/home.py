@@ -89,6 +89,11 @@ def render() -> None:
             "desc": "Crée ton XI sur 7 formations, choisis ton banc, terrain visuel + KPIs cumulés.",
         },
         {
+            "icon": "📰",
+            "title": "Intelligence Médias",
+            "desc": "Actualités clubs par flux RSS, analyse narrative (résumés, sentiments) via Claude.",
+        },
+        {
             "icon": "🗂️",
             "title": "Couverture",
             "desc": "Matrice de couverture des données extraites par saison et type de fichier.",
