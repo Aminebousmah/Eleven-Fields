@@ -58,13 +58,13 @@ PLAYER_SEASON_STATS = [
 ]
 
 TEAM_MATCH_STATS = [
-    "schedule", "keeper", "shooting", "passing", "passing_types",
+    "keeper", "shooting", "passing", "passing_types",
     "goal_shot_creation", "defense", "possession", "misc",
 ]
 
 PLAYER_MATCH_STATS = [
-    "summary", "keepers", "passing", "passing_types",
-    "defense", "possession", "misc",
+    "summary", "keepers", "shooting", "passing", "passing_types",
+    "goal_shot_creation", "defense", "possession", "misc",
 ]
 
 # ── Groupes de métriques ──────────────────────────────────────────────────────
