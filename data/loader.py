@@ -68,6 +68,26 @@ def _parse_flat_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path, low_memory=False, encoding="utf-8", errors="replace")
 
 
+def _is_multiheader(path: Path) -> bool:
+    """
+    Détecte si un CSV est au format soccerdata (double en-tête avec 'Unnamed')
+    ou au format plat généré par le nouveau scraper direct.
+    """
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            first = f.readline()
+        return first.startswith(",") or "Unnamed" in first
+    except OSError:
+        return True  # par défaut, essayer le parser multiheader
+
+
+def _parse_auto(path: Path) -> pd.DataFrame:
+    """Auto-détecte le format CSV et applique le bon parser."""
+    if _is_multiheader(path):
+        return _parse_multiheader_csv(path)
+    return _parse_flat_csv(path)
+
+
 def _numeric(df: pd.DataFrame, exclude: tuple[str, ...] = ()) -> pd.DataFrame:
     """Convertit toutes les colonnes sauf exclude en numérique."""
     skip = {"league", "season", "team", "player", "game", "date", "url",
@@ -101,7 +121,7 @@ def load_team_season_stats(
     for s in seasons:
         path = DATA_DIR / s / f"FB_team_season_stats_{stat_type}.csv"
         if path.exists():
-            frames.append(_parse_multiheader_csv(path))
+            frames.append(_parse_auto(path))
 
     if not frames:
         return pd.DataFrame()
@@ -132,7 +152,7 @@ def load_player_season_stats(
     for s in seasons:
         path = DATA_DIR / s / f"FB_player_season_stats_{stat_type}.csv"
         if path.exists():
-            frames.append(_parse_multiheader_csv(path))
+            frames.append(_parse_auto(path))
 
     if not frames:
         return pd.DataFrame()
