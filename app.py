@@ -91,6 +91,11 @@ def _render_sidebar() -> tuple[str, str, str]:
 
     season, league = render_global_filters()
 
+    st.sidebar.divider()
+    if st.sidebar.button("🔄 Vider le cache", use_container_width=True, help="Force le rechargement de toutes les données"):
+        st.cache_data.clear()
+        st.rerun()
+
     return page, season, league
 
 

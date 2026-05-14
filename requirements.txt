@@ -1,25 +1,35 @@
+# ── Core Streamlit app ────────────────────────────────────────────────────────
+streamlit>=1.35
+pandas>=2.3
+numpy>=2.4
+plotly>=5.20
+scikit-learn>=1.4
+scipy>=1.13
+
+# ── Données FBref ─────────────────────────────────────────────────────────────
+# ⚠️ Version verrouillée — 1.9.x retire passing/defense/possession/keeper_adv/etc.
 soccerdata==1.8.8
 
-# Matching FBref <-> Transfermarkt
+# ── Matching FBref <-> Transfermarkt ─────────────────────────────────────────
 rapidfuzz>=3.6
 Unidecode>=1.3
 
-# Telechargement dataset Transfermarkt (Kaggle)
+# ── Téléchargement dataset Transfermarkt (Kaggle) ─────────────────────────────
 # Optionnel : commenter si pas besoin du module Transfermarkt.
 kaggle>=1.6
 
-# Optionnels (lazy import dans comparison.py)
-# Decommenter pour activer SHAP / Prediction PPM :
+# ── Optionnels : ML avancé (lazy import dans comparison.py) ──────────────────
+# Décommenter pour activer SHAP / Prédiction PPM :
 # shap>=0.45
 # xgboost>=2.0
 
-# Intelligence Medias
+# ── Intelligence Médias ───────────────────────────────────────────────────────
 # Fetch RSS
 feedparser>=6.0
 # Appels Claude Haiku (analyse narrative)
 anthropic>=0.25
 
-# Utilitaires
+# ── Utilitaires HTTP / parsing HTML ──────────────────────────────────────────
 requests>=2.31
 lxml>=5.0
 html5lib>=1.1
