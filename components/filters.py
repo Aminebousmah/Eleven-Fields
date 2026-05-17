@@ -191,41 +191,127 @@ def _player_preview_card(
 # ── Filtres globaux (sidebar) ─────────────────────────────────────────────────
 
 def render_global_filters() -> tuple[str, str]:
-    """
-    Sidebar : Saison + Ligue uniquement.
-    Retourne (season_key, league).
-    """
+    """[Déprécié, conservé pour compat] Sidebar : Saison + Ligue."""
     st.sidebar.markdown(
         f"<div style='font-size:0.72rem;color:{COLORS['text_muted']};"
         f"text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px'>"
-        f"Filtres globaux</div>",
+        f"Filtres</div>",
         unsafe_allow_html=True,
     )
+    return _filter_widgets(st.sidebar)
 
+
+def render_inline_filters() -> tuple[str, str]:
+    """
+    Filtres saison + ligue au-dessus du contenu principal (pas dans la sidebar).
+    Retourne (season_key, league). État conservé via session_state.
+    """
+    c1, c2, _ = st.columns([1.2, 2, 4])
+    return _filter_widgets((c1, c2))
+
+
+def _filter_widgets(target) -> tuple[str, str]:
+    """Implémentation partagée des 2 selectbox saison + ligue."""
     season_labels = list(SEASONS.values())
     season_keys = list(SEASONS.keys())
     _init_state("season_idx", len(season_keys) - 1)
 
-    season_label = st.sidebar.selectbox(
-        "Saison",
-        options=season_labels,
-        index=st.session_state["season_idx"],
-        key="season_select",
-    )
+    league_options = ["Toutes les ligues"] + LEAGUES
+
+    # target est soit st.sidebar, soit un tuple de colonnes (c1, c2)
+    if isinstance(target, tuple):
+        c1, c2 = target
+        with c1:
+            season_label = st.selectbox(
+                "Saison",
+                options=season_labels,
+                index=st.session_state["season_idx"],
+                key="season_select",
+            )
+        with c2:
+            league = st.selectbox(
+                "Ligue",
+                options=league_options,
+                format_func=lambda x: LEAGUE_LABELS.get(x, x),
+                key="league_select",
+                index=league_options.index(
+                    st.session_state.get("league", "Toutes les ligues")
+                ) if st.session_state.get("league", "Toutes les ligues") in league_options else 0,
+            )
+    else:
+        season_label = target.selectbox(
+            "Saison",
+            options=season_labels,
+            index=st.session_state["season_idx"],
+            key="season_select",
+        )
+        league = target.selectbox(
+            "Ligue",
+            options=league_options,
+            format_func=lambda x: LEAGUE_LABELS.get(x, x),
+            key="league_select",
+            index=league_options.index(
+                st.session_state.get("league", "Toutes les ligues")
+            ) if st.session_state.get("league", "Toutes les ligues") in league_options else 0,
+        )
+
     st.session_state["season_idx"] = season_labels.index(season_label)
     season_key = season_keys[st.session_state["season_idx"]]
-
-    league_options = ["Toutes les ligues"] + LEAGUES
-    league = st.sidebar.selectbox(
-        "Ligue",
-        options=league_options,
-        format_func=lambda x: LEAGUE_LABELS.get(x, x),
-        key="league_select",
-        index=league_options.index(st.session_state.get("league", "Toutes les ligues"))
-        if st.session_state.get("league", "Toutes les ligues") in league_options else 0,
-    )
     st.session_state["league"] = league
     return season_key, league
+
+
+# ── Gate "Afficher" : bouton qui révèle les visualisations ───────────────────
+
+def render_show_gate(
+    state_key: str,
+    label: str = "📊  Afficher les résultats",
+    hint: str = "Configure tes filtres ci-dessus, puis clique sur **Afficher** pour générer l'analyse.",
+) -> bool:
+    """
+    Affiche un bouton 'Afficher' tant que l'utilisateur ne l'a pas cliqué.
+    Retourne True si l'utilisateur a cliqué (état persistant via session_state),
+    False sinon.
+
+    Utilisation typique en haut d'un dashboard :
+
+        # ... filtres ...
+
+        if not render_show_gate("ranking_player"):
+            return
+
+        # ... visualisations (s'exécute uniquement après clic) ...
+    """
+    flag = f"{state_key}_shown"
+    if flag not in st.session_state:
+        st.session_state[flag] = False
+
+    if st.session_state[flag]:
+        # Déjà cliqué : bouton réinitialiser discret
+        c1, c2 = st.columns([1, 5])
+        with c1:
+            if st.button("🔄  Réinitialiser", key=f"reset_{state_key}_btn",
+                         use_container_width=True):
+                st.session_state[flag] = False
+                st.rerun()
+        return True
+
+    # Pas encore cliqué : bouton Afficher + message d'aide
+    c1, c2 = st.columns([1.5, 5])
+    with c1:
+        clicked = st.button(label, key=f"show_{state_key}_btn",
+                            type="primary", use_container_width=True)
+    with c2:
+        st.markdown(
+            f"<div style='color:{COLORS['text_muted']};padding-top:8px;"
+            f"font-size:0.88rem'>💡 {hint}</div>",
+            unsafe_allow_html=True,
+        )
+
+    if clicked:
+        st.session_state[flag] = True
+        st.rerun()
+    return False
 
 
 # ── Sélecteurs contextuels (en haut du contenu) ───────────────────────────────
@@ -407,11 +493,17 @@ def select_player(
     Retourne (player, team, position_group).
     """
     pdf = load_player_season_stats("standard", [season_key])
+    if pdf.empty or "league" not in pdf.columns:
+        st.warning(
+            f"⚠️ Aucune donnée joueur trouvée pour **{season_key}**. "
+            "Vérifie que les CSV `FB_player_season_stats_*.csv` sont bien présents."
+        )
+        return "", "", ""
     if league != "Toutes les ligues":
         pdf = pdf[pdf["league"] == league]
 
     if pdf.empty:
-        st.warning("Aucun joueur disponible.")
+        st.warning("Aucun joueur disponible pour cette ligue.")
         return "", "", ""
 
     # Filtres en ligne

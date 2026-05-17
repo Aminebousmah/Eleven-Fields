@@ -139,12 +139,21 @@ def _render_focus(season: str, league: str, league_filter: str | None, league_la
     if not team:
         return
 
+    # Gate "Afficher"
+    from components.filters import render_show_gate
+    if not render_show_gate(
+        "team_overview",
+        label="📊  Afficher la fiche",
+        hint="Sélectionne ton équipe ci-dessus, puis clique pour générer l'analyse complète.",
+    ):
+        return
+
     _team_header(team, league_label, season, league_filter)
     render_kpi_row(_team_kpis(season, league_filter, team, _season_key=season))
 
     st.divider()
 
-    tab_card, tab1, tab2, tab3, tab4, tab5, tab6, tab_tm = st.tabs([
+    tab_card, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "🎨 Rapport visuel",
         "⚽ Radar Avec ballon",
         "🛡️ Radar Sans ballon",
@@ -152,7 +161,6 @@ def _render_focus(season: str, league: str, league_filter: str | None, league_la
         "📊 Indices",
         "🔵 Style de jeu",
         "🔁 Équipes similaires",
-        "💶 Transfermarkt",
     ])
 
     with tab_card:
@@ -215,9 +223,6 @@ def _render_focus(season: str, league: str, league_filter: str | None, league_la
 
     with tab6:
         _render_similar_teams(team, season, league_filter)
-
-    with tab_tm:
-        _render_tm_team(team, season, league_filter)
 
 
 # ── Mode Versus ───────────────────────────────────────────────────────────────

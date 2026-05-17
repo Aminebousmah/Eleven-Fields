@@ -56,7 +56,6 @@ URGENCY_LABEL = {
 DASHBOARD_GOTO = {
     "team_overview":  "team",
     "player_profile": "player",
-    "match_analysis": "match",
     "database":       "database",
     "comparison":     "compare",
 }
@@ -64,7 +63,6 @@ DASHBOARD_GOTO = {
 DASHBOARD_LABEL = {
     "team_overview":  "🏟️ Vue Équipe",
     "player_profile": "👤 Profil Joueur",
-    "match_analysis": "📅 Analyse Match",
     "database":       "📊 Base de données",
     "comparison":     "⚖️ Comparaison",
 }

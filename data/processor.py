@@ -999,6 +999,123 @@ def compute_profile_scores(
     return scores
 
 
+def compute_profile_ranking(
+    profile_name: str,
+    season: str,
+    league: str | None = None,
+    pos_group: str | None = None,
+    min_minutes: int = 500,
+) -> pd.DataFrame:
+    """
+    Calcule le score /100 sur un profil donné pour tous les joueurs du pool.
+    Retourne un DataFrame trié par score décroissant avec colonnes :
+      player, team, league, age, pos, Min, score
+
+    Optimisé pour rankings — calcul vectoriel des percentiles par métrique.
+    """
+    from config import PLAYER_PROFILES
+
+    if profile_name not in PLAYER_PROFILES:
+        return pd.DataFrame()
+
+    cfg = PLAYER_PROFILES[profile_name]
+    target_pos = pos_group or cfg["pos_group"]
+    league_f = league if league and league != "Toutes les ligues" else None
+
+    # Pool de référence
+    std = load_player_season_stats("standard", [season])
+    if league_f:
+        std = std[std["league"] == league_f]
+    if std.empty:
+        return pd.DataFrame()
+
+    std = std.copy()
+    std["Min"] = pd.to_numeric(std["Min"], errors="coerce")
+    pool = std[
+        (std["pos"].apply(_pos_to_group_simple) == target_pos)
+        & (std["Min"].fillna(0) >= min_minutes)
+    ][["player", "team", "league", "age", "pos", "Min"]].drop_duplicates(
+        subset=["player", "team"]
+    )
+    if pool.empty:
+        return pd.DataFrame()
+
+    # Pour chaque métrique du profil, calcule un percentile par joueur
+    cache_df: dict[str, pd.DataFrame] = {}
+    pct_columns: dict[str, pd.Series] = {}
+    weights: dict[str, float] = {}
+
+    for stat_type, col, weight in cfg["metrics"]:
+        if stat_type not in cache_df:
+            df = load_player_season_stats(stat_type, [season])
+            if league_f:
+                df = df[df["league"] == league_f]
+            cache_df[stat_type] = df
+        df = cache_df[stat_type]
+        if col not in df.columns:
+            continue
+
+        sub = df[["player", "team", col]].drop_duplicates(subset=["player", "team"])
+        sub = sub.merge(pool[["player", "team", "Min"]], on=["player", "team"], how="inner")
+        if sub.empty:
+            continue
+
+        sub["__val"] = pd.to_numeric(sub[col], errors="coerce")
+        if col not in _RATE_STATS:
+            sub["__val"] = sub.apply(
+                lambda r: _to_per_90(r["__val"], r["Min"]) if pd.notna(r["__val"]) else None,
+                axis=1,
+            )
+
+        clean = sub["__val"].dropna()
+        if clean.empty:
+            continue
+
+        # Percentile par joueur (vectorisé via percentile_series existant)
+        pct = percentile_series(sub["__val"])
+        if weight < 0:
+            pct = 100 - pct
+
+        # Index sur (player, team) pour merge ultérieur
+        key = f"__pct__{stat_type}__{col}"
+        sub_aligned = sub[["player", "team"]].copy()
+        sub_aligned[key] = pct.values
+        pct_columns[key] = sub_aligned
+        weights[key] = abs(weight)
+
+    if not pct_columns:
+        return pd.DataFrame()
+
+    # Merge tous les percentiles dans le pool
+    result = pool.copy()
+    for key, sub_df in pct_columns.items():
+        result = result.merge(sub_df, on=["player", "team"], how="left")
+
+    # Score pondéré
+    weight_sum = sum(weights.values())
+    if weight_sum == 0:
+        return pd.DataFrame()
+
+    score = pd.Series(0.0, index=result.index)
+    total_w = pd.Series(0.0, index=result.index)
+    for key, w in weights.items():
+        if key not in result.columns:
+            continue
+        col_vals = pd.to_numeric(result[key], errors="coerce")
+        mask = col_vals.notna()
+        score.loc[mask] += col_vals.loc[mask] * w
+        total_w.loc[mask] += w
+
+    result["score"] = (score / total_w.replace(0, pd.NA)).round(1)
+    result = result.dropna(subset=["score"]).copy()
+
+    # Nettoyer les colonnes percentile intermédiaires
+    drop = [c for c in result.columns if c.startswith("__pct__")]
+    result = result.drop(columns=drop)
+
+    return result.sort_values("score", ascending=False).reset_index(drop=True)
+
+
 def compute_dominant_profile(
     player: str,
     team: str,
