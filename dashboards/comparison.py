@@ -13,7 +13,6 @@ from components.charts import make_scatter, make_radar, make_percentile_bars
 from components.filters import select_two_players
 from components.glossary import (
     render_metric_glossary, render_disclaimer,
-    watchlist_get, watchlist_remove, watchlist_clear,
 )
 from components.kpi_cards import render_section_header, render_kpi_row
 from data.loader import (
@@ -36,38 +35,62 @@ except Exception:
     def enrich_with_photos(df, *a, **kw): return df
 
 
-def _player_card(player: str, team: str, league_filter: str | None) -> None:
-    """Mini-fiche joueur avec photo + logo club."""
+def _player_card(player: str, team: str, league_filter: str | None,
+                 season: str | None = None, accent: str | None = None) -> None:
+    """
+    Carte joueur enrichie : photo, club + logo, valeur marché, infos clés.
+    `accent` = couleur d'accent (utilisée pour la barre verticale gauche).
+    """
     tm = match_player(player, fbref_league=league_filter)
     photo = tm.get("image_url") if tm else None
     logo = get_club_logo(team, league_filter)
     mv = tm.get("market_value_in_eur") if tm else None
 
-    cols = st.columns([1, 1, 6])
+    accent_color = accent or COLORS["accent_green"]
+
+    # Bandeau coloré + ligne header
+    st.markdown(
+        f"<div style='display:flex;align-items:center;gap:14px;"
+        f"padding:12px 16px;background:{COLORS['card']};"
+        f"border-radius:12px;border:1px solid {COLORS['border']};"
+        f"border-left:4px solid {accent_color}'>",
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns([1.4, 1, 5])
     with cols[0]:
-        if photo: st.image(photo, width=70)
+        if photo:
+            st.image(photo, width=110)
+        else:
+            st.markdown(
+                f"<div style='width:110px;height:110px;border-radius:8px;"
+                f"background:{COLORS['border']};display:flex;align-items:center;"
+                f"justify-content:center;font-size:48px'>👤</div>",
+                unsafe_allow_html=True,
+            )
     with cols[1]:
-        if logo: st.image(logo, width=50)
+        if logo: st.image(logo, width=70)
     with cols[2]:
         st.markdown(
-            f"<div style='padding-top:6px'>"
-            f"<div style='font-size:1.1rem;font-weight:800;color:{COLORS['text']}'>{player}</div>"
-            f"<div style='font-size:0.82rem;color:{COLORS['text_muted']}'>"
-            f"{team}{' · ' + format_value(mv) if mv and pd.notna(mv) else ''}"
-            f"</div></div>",
+            f"<div style='font-size:1.25rem;font-weight:900;color:{COLORS['text']};"
+            f"margin-bottom:4px'>{player}</div>"
+            f"<div style='font-size:0.88rem;color:{COLORS['text_muted']};"
+            f"margin-bottom:8px'>🏟️ {team}</div>"
+            f"<div style='display:flex;gap:12px;flex-wrap:wrap'>"
+            + (
+                f"<span style='background:{COLORS['accent_gold']}20;"
+                f"color:{COLORS['accent_gold']};padding:3px 10px;border-radius:10px;"
+                f"font-size:0.78rem;font-weight:700'>💰 {format_value(mv)}</span>"
+                if mv and pd.notna(mv) else ""
+            )
+            + "</div>",
             unsafe_allow_html=True,
         )
 
+    st.markdown("</div>", unsafe_allow_html=True)
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _available_ppm_seasons() -> list[str]:
-    """Saisons disponibles dans playing_time, les plus récentes en premier."""
-    df = load_team_season_stats("playing_time")
-    if df.empty or "season" not in df.columns:
-        return []
-    return list(reversed(sorted(df["season"].dropna().unique().tolist())))
-
 
 def _pos_group(pos_str: str) -> str:
     if pd.isna(pos_str):
@@ -129,95 +152,233 @@ def _player_percentiles(
     return labels, percentiles, raw
 
 
-# ── Render ────────────────────────────────────────────────────────────────────
+# ── Render — Comparaison Clubs (page dédiée) ─────────────────────────────────
 
-def render(season: str, league: str) -> None:
+def _club_card(team: str, league_filter: str | None, accent: str) -> None:
+    """Carte équipe enrichie : logo + nom + ligue."""
+    logo = get_club_logo(team, league_filter)
+
+    st.markdown(
+        f"<div style='display:flex;align-items:center;gap:14px;"
+        f"padding:12px 16px;background:{COLORS['card']};"
+        f"border-radius:12px;border:1px solid {COLORS['border']};"
+        f"border-left:4px solid {accent}'>",
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns([1.2, 5])
+    with cols[0]:
+        if logo:
+            st.image(logo, width=90)
+        else:
+            st.markdown(
+                f"<div style='width:90px;height:90px;border-radius:8px;"
+                f"background:{COLORS['border']};display:flex;align-items:center;"
+                f"justify-content:center;font-size:40px'>🏟️</div>",
+                unsafe_allow_html=True,
+            )
+    with cols[1]:
+        league_lbl = LEAGUE_LABELS.get(league_filter, league_filter or "Big 5")
+        st.markdown(
+            f"<div style='font-size:1.35rem;font-weight:900;color:{COLORS['text']};"
+            f"margin-bottom:4px'>{team}</div>"
+            f"<div style='font-size:0.88rem;color:{COLORS['text_muted']}'>"
+            f"🇪🇺 {league_lbl}</div>",
+            unsafe_allow_html=True,
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _club_percentiles(team: str, metrics: list[tuple[str, str]],
+                      season: str, league_filter: str | None,
+                     ) -> tuple[list[str], list[float], list[float]]:
+    """Retourne (labels, percentiles 0-100, valeurs brutes) pour un club."""
+    from data.processor import percentile_score
+
+    labels, pcts, raws = [], [], []
+    for stat_type, col in metrics:
+        df = load_team_season_stats(stat_type, [season])
+        if league_filter:
+            df = df[df["league"] == league_filter]
+        if col not in df.columns:
+            continue
+        series = pd.to_numeric(df[col], errors="coerce").dropna()
+        row = df[df["team"] == team]
+        if row.empty:
+            continue
+        val = pd.to_numeric(row[col].values[0], errors="coerce")
+        if pd.isna(val):
+            continue
+        labels.append(col)
+        pcts.append(percentile_score(series, float(val)))
+        raws.append(float(val))
+    return labels, pcts, raws
+
+
+_CLUB_PRESETS: dict[str, list[tuple[str, str, str]]] = {
+    "Offensif": [
+        ("Buts",                "standard", "Gls"),
+        ("xG",                  "shooting", "xG"),
+        ("Tirs",                "shooting", "Sh"),
+        ("Tirs cadrés (%)",     "shooting", "SoT%"),
+        ("Passes vers surface", "passing",  "PPA"),
+        ("Courses progressives","standard", "PrgC"),
+    ],
+    "Défensif": [
+        ("Buts encaissés",      "keeper",   "GA"),
+        ("Tacles",              "defense",  "Tkl"),
+        ("Interceptions",       "defense",  "Int"),
+        ("Blocs",               "defense",  "Blocks"),
+        ("Dégagements",         "misc",     "Clr"),
+        ("Duels aériens (%)",   "misc",     "Won%"),
+    ],
+    "Construction": [
+        ("Possession",          "standard", "Poss"),
+        ("Précision passes",    "passing",  "Cmp%"),
+        ("Passes progressives", "standard", "PrgP"),
+        ("Passes dernier tiers","passing",  "1/3"),
+        ("Touches",             "possession","Touches"),
+        ("Distance progr.",     "passing",  "PrgDist"),
+    ],
+    "Discipline": [
+        ("Fautes",              "misc",     "Fls"),
+        ("Cartons jaunes",      "standard", "CrdY"),
+        ("Cartons rouges",      "standard", "CrdR"),
+        ("Hors-jeux",           "misc",     "Off"),
+    ],
+}
+
+
+def render_clubs(season: str, league: str) -> None:
+    """Comparaison de 2 clubs : cartes + radar percentile + tableau coloré."""
+    from components.filters import select_two_teams
+
     league_filter = None if league == "Toutes les ligues" else league
 
-    tab1, tab2, tab_wl, tab3, tab4 = st.tabs([
-        "🏟️ Équipes",
-        "👥 Joueurs",
-        "📋 Ma shortlist",
-        "🔍 SHAP",
-        "🏆 Prédiction PPM",
-    ])
+    render_section_header(
+        "Comparaison radar — 2 clubs",
+        "Choisis un type de comparaison puis sélectionne les 2 clubs.",
+    )
 
-    # ── Tab 1 : Scatter xG vs xGA équipes ────────────────────────────────────
-    with tab1:
-        render_section_header(
-            "xG vs xGA — Toutes les équipes",
-            "Axe X = danger créé · Axe Y = danger concédé · Point bas-droit = meilleur profil.",
-        )
+    # Type de comparaison
+    comp_type = st.selectbox(
+        "Type de comparaison",
+        options=list(_CLUB_PRESETS.keys()),
+        key="cmp_club_type",
+        help="Set de métriques thématique adapté à l'analyse.",
+    )
 
-        std = load_team_season_stats("standard", [season])
-        sht = load_team_season_stats("shooting", [season])
-        if league_filter:
-            std = std[std["league"] == league_filter]
-            sht = sht[sht["league"] == league_filter]
+    # Sélecteur 2 clubs
+    (team_a, team_b) = select_two_teams(season, league)
+    if not (team_a and team_b):
+        st.info("Sélectionnez deux clubs.")
+        render_disclaimer()
+        return
 
-        merged = std[["team", "league", "Poss"]].merge(
-            sht[["team", "xG", "npxG"]], on="team", how="inner"
-        )
+    # Gate "Afficher"
+    from components.filters import render_show_gate
+    if not render_show_gate(
+        "compare_clubs",
+        label="⚖️  Lancer la comparaison",
+        hint="Tu as choisi tes 2 clubs et le type de comparaison. Clique pour générer.",
+    ):
+        render_disclaimer()
+        return
 
-        # On récupère xGA depuis keeper
-        kpr = load_team_season_stats("keeper", [season])
-        if league_filter:
-            kpr = kpr[kpr["league"] == league_filter]
-        if "GA" in kpr.columns:
-            merged = merged.merge(kpr[["team", "GA"]], on="team", how="left")
-            merged = merged.rename(columns={"GA": "xGA"})
-        elif "GA90" in kpr.columns:
-            merged = merged.merge(kpr[["team", "GA90"]], on="team", how="left")
-            merged = merged.rename(columns={"GA90": "xGA"})
+    # Cartes clubs enrichies
+    cardA, cardB = st.columns(2)
+    with cardA:
+        _club_card(team_a, league_filter, accent=COLORS["accent_green"])
+    with cardB:
+        _club_card(team_b, league_filter, accent=COLORS["accent_blue"])
 
-        if "xGA" not in merged.columns or merged.empty:
-            st.info("Données xGA insuffisantes.")
-        else:
-            for c in ["xG", "xGA", "Poss"]:
-                if c in merged.columns:
-                    merged[c] = pd.to_numeric(merged[c], errors="coerce")
+    preset = _CLUB_PRESETS[comp_type]
+    metrics_raw = [(stat_type, col) for _, stat_type, col in preset]
+    metric_labels_fr = {col: label for label, _, col in preset}
 
-            fig = make_scatter(
-                merged.dropna(subset=["xG", "xGA"]),
-                x="xG", y="xGA",
-                text="team",
-                size="Poss" if "Poss" in merged.columns else None,
-                title=f"xG vs xGA — {league_filter or 'Big 5'} · {season}",
-                xlab="xG (danger créé)", ylab="xGA (danger concédé)",
-                highlight=merged["team"].tolist(),
-            )
-            st.plotly_chart(fig, use_container_width=True)
+    la, pa, ra = _club_percentiles(team_a, metrics_raw, season, league_filter)
+    lb, pb, rb = _club_percentiles(team_b, metrics_raw, season, league_filter)
+    common = [l for l in la if l in lb]
+    if not common:
+        st.warning("Pas de métriques communes pour ces clubs.")
+        render_disclaimer()
+        return
 
-        # Tableau classement
-        render_section_header("Tableau de bord ligue")
-        if not merged.empty:
-            show = merged.sort_values("xG", ascending=False)
-            show = enrich_with_logos(show, team_col="team", league=league_filter)
+    idx_a = {l: i for i, l in enumerate(la)}
+    idx_b = {l: i for i, l in enumerate(lb)}
+    display_labels = [metric_labels_fr.get(c, c) for c in common]
 
-            order = []
-            if "logo_url" in show.columns: order.append("logo_url")
-            order += ["team", "league", "xG", "npxG", "xGA", "Poss"]
-            display_cols = [c for c in order if c in show.columns]
+    # Radar
+    fig = make_radar(
+        {
+            team_a: [pa[idx_a[l]] / 100 for l in common],
+            team_b: [pb[idx_b[l]] / 100 for l in common],
+        },
+        display_labels,
+        title=f"Comparaison percentile — {comp_type} ({LEAGUE_LABELS.get(league_filter, league_filter or 'Big 5')})",
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-            disp = show[display_cols].reset_index(drop=True).rename(columns={
-                "logo_url": "Logo", "team": "Équipe", "league": "Ligue",
-            })
-            column_config = {}
-            if "Logo" in disp.columns:
-                column_config["Logo"] = st.column_config.ImageColumn("Logo", width="small")
-            for c in ["xG", "npxG", "xGA", "Poss"]:
-                if c in disp.columns:
-                    column_config[c] = st.column_config.NumberColumn(c, format="%.2f")
-            st.dataframe(
-                disp, use_container_width=True, hide_index=True, column_config=column_config,
-            )
-            render_metric_glossary(metrics=["xG", "npxG", "xGA", "Poss"])
+    # Tableau épuré coloré (3 cols : métrique + 2 percentiles)
+    comp_df = pd.DataFrame({
+        "Métrique": display_labels,
+        team_a: [int(round(pa[idx_a[l]])) for l in common],
+        team_b: [int(round(pb[idx_b[l]])) for l in common],
+    })
 
-    # ── Tab 2 : Comparaison joueurs ───────────────────────────────────────────
-    with tab2:
+    def _color_better(row):
+        v1, v2 = row[team_a], row[team_b]
+        GREEN_BG = "background-color:#0f6b3f;color:#ffffff;font-weight:700"
+        RED_BG   = "background-color:#7a1f29;color:#ffffff;font-weight:700"
+        if v1 > v2:
+            return ["", GREEN_BG, RED_BG]
+        if v2 > v1:
+            return ["", RED_BG, GREEN_BG]
+        return ["", "", ""]
+
+    styled = (
+        comp_df.style
+        .apply(_color_better, axis=1)
+        .format({team_a: "{:d}", team_b: "{:d}"})
+    )
+    st.dataframe(
+        styled, use_container_width=True, hide_index=True,
+        height=min(38 * len(comp_df) + 80, 600),
+        column_config={
+            "Métrique": st.column_config.TextColumn(width="medium"),
+            team_a:     st.column_config.NumberColumn(width="small"),
+            team_b:     st.column_config.NumberColumn(width="small"),
+        },
+    )
+
+    render_disclaimer()
+
+
+# ── Render — Comparaison Joueurs (page dédiée) ────────────────────────────────
+
+def render_players(season: str, league: str) -> None:
+    """Comparaison de 2 joueurs (radar percentile + tableau épuré)."""
+    league_filter = None if league == "Toutes les ligues" else league
+
+    if True:
+        from config import COMPARISON_PRESETS
+        from components.filters import render_show_gate
+
         render_section_header(
             "Comparaison radar — 2 joueurs",
-            "Sélectionnez deux joueurs de même position pour une comparaison équitable.",
+            "Choisis un type de comparaison puis sélectionne les 2 joueurs.",
+        )
+
+        # ── Sélection du type de comparaison ─────────────────────────────────
+        comp_options = ["Auto (par poste)"] + list(COMPARISON_PRESETS.keys())
+        comp_type = st.selectbox(
+            "Type de comparaison",
+            options=comp_options,
+            key="cmp_type",
+            help=(
+                "Auto = métriques choisies selon le poste du joueur 1. "
+                "Sinon, set de métriques pré-câblé thématique."
+            ),
         )
 
         pdf = load_player_season_stats("standard", [season])
@@ -227,33 +388,63 @@ def render(season: str, league: str) -> None:
         (p1, t1), (p2, t2) = select_two_players(season, league)
         if not (p1 and p2):
             st.info("Sélectionnez deux joueurs.")
-        else:
-            # Cartes joueurs avec photos + logos
-            cardA, cardB = st.columns(2)
-            with cardA: _player_card(p1, t1, league_filter)
-            with cardB: _player_card(p2, t2, league_filter)
+            render_disclaimer()
+            return
 
-            # Position de référence : celle du joueur 1
+        # Gate "Afficher" — après sélection des joueurs
+        if not render_show_gate(
+            "compare_players",
+            label="⚔️  Lancer la comparaison",
+            hint="Tu as choisi tes 2 joueurs et le type de comparaison. Clique pour générer.",
+        ):
+            render_disclaimer()
+            return
+
+        if True:
+            # Cartes joueurs enrichies
+            cardA, cardB = st.columns(2)
+            with cardA:
+                _player_card(p1, t1, league_filter, season=season,
+                             accent=COLORS["accent_green"])
+            with cardB:
+                _player_card(p2, t2, league_filter, season=season,
+                             accent=COLORS["accent_blue"])
+
             row1 = pdf[(pdf["player"] == p1) & (pdf["team"] == t1)]
             pos1 = _pos_group(row1["pos"].values[0] if not row1.empty else "MF")
             row2 = pdf[(pdf["player"] == p2) & (pdf["team"] == t2)]
             pos2 = _pos_group(row2["pos"].values[0] if not row2.empty else "MF")
 
-            if pos1 != pos2:
-                st.warning(
-                    f"⚠️ Positions différentes : {p1} ({pos1}) vs {p2} ({pos2}). "
-                    f"La comparaison utilise les métriques du poste de **{p1}**."
-                )
-            metrics = PLAYER_METRICS_BY_POS.get(pos1, PLAYER_METRICS_BY_POS["MF"])
+            # ── Détermine les métriques selon le type de comparaison ────────
+            if comp_type == "Auto (par poste)":
+                if pos1 != pos2:
+                    st.warning(
+                        f"⚠️ Positions différentes : {p1} ({pos1}) vs {p2} ({pos2}). "
+                        f"La comparaison utilise les métriques du poste de **{p1}**."
+                    )
+                metrics_raw = PLAYER_METRICS_BY_POS.get(pos1, PLAYER_METRICS_BY_POS["MF"])
+                # Format (stat_type, col) sans label FR
+                metric_labels_fr = None
+            else:
+                preset = COMPARISON_PRESETS[comp_type]
+                # Format (label_fr, stat_type, col)
+                metrics_raw = [(stat_type, col) for _, stat_type, col in preset]
+                metric_labels_fr = {col: label for label, _, col in preset}
 
-            l1, p_pct1, r1 = _player_percentiles(p1, t1, metrics, season, league_filter, pos1)
-            l2, p_pct2, r2 = _player_percentiles(p2, t2, metrics, season, league_filter, pos1)
+            ref_pos = pos1  # pool de référence percentile
+            l1, p_pct1, r1 = _player_percentiles(p1, t1, metrics_raw, season, league_filter, ref_pos)
+            l2, p_pct2, r2 = _player_percentiles(p2, t2, metrics_raw, season, league_filter, ref_pos)
 
             common = [l for l in l1 if l in l2]
             if not common:
                 st.warning("Pas de métriques communes pour ces joueurs.")
             else:
-                # Radar percentiles (0-100 → 0-1 pour cohérence visuelle)
+                # Si on a un preset FR, on utilise les labels FR sur le radar
+                display_labels = (
+                    [metric_labels_fr.get(c, c) for c in common]
+                    if metric_labels_fr else common
+                )
+
                 idx1 = {l: i for i, l in enumerate(l1)}
                 idx2 = {l: i for i, l in enumerate(l2)}
                 fig = make_radar(
@@ -261,274 +452,67 @@ def render(season: str, league: str) -> None:
                         p1: [p_pct1[idx1[l]] / 100 for l in common],
                         p2: [p_pct2[idx2[l]] / 100 for l in common],
                     },
-                    common,
-                    title=f"Comparaison percentile — joueurs {pos1} (≥ 500 min)",
+                    display_labels,
+                    title=(
+                        f"Comparaison percentile — {comp_type}"
+                        if comp_type != "Auto (par poste)"
+                        else f"Comparaison percentile — joueurs {ref_pos} (≥ 500 min)"
+                    ),
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-                # Tableau côte-à-côte : valeurs brutes + percentile
+                # ── Tableau épuré : 3 colonnes seulement, vert = meilleur, rouge = pire
                 comp_df = pd.DataFrame({
-                    "Métrique": common,
-                    f"{p1} · valeur": [round(r1[idx1[l]], 2) for l in common],
-                    f"{p1} · percentile": [round(p_pct1[idx1[l]], 0) for l in common],
-                    f"{p2} · valeur": [round(r2[idx2[l]], 2) for l in common],
-                    f"{p2} · percentile": [round(p_pct2[idx2[l]], 0) for l in common],
+                    "Métrique": display_labels,
+                    p1: [int(round(p_pct1[idx1[l]])) for l in common],
+                    p2: [int(round(p_pct2[idx2[l]])) for l in common],
                 })
-                comp_df["Δ percentile"] = comp_df[f"{p1} · percentile"] - comp_df[f"{p2} · percentile"]
-                st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
-                render_metric_glossary(metrics=common)
+                def _color_better(row):
+                    """Vert/rouge contrastés (fond sombre, texte clair)."""
+                    v1, v2 = row[p1], row[p2]
+                    GREEN_BG = "background-color:#0f6b3f;color:#ffffff;font-weight:700"
+                    RED_BG   = "background-color:#7a1f29;color:#ffffff;font-weight:700"
+                    if v1 > v2:
+                        return ["", GREEN_BG, RED_BG]
+                    if v2 > v1:
+                        return ["", RED_BG, GREEN_BG]
+                    return ["", "", ""]
 
-    # ── Tab Watchlist : ma shortlist personnelle ────────────────────────────
-    with tab_wl:
-        _render_watchlist_tab(season, league_filter)
+                styled = (
+                    comp_df.style
+                    .apply(_color_better, axis=1)
+                    .format({p1: "{:d}", p2: "{:d}"})
+                )
+                st.dataframe(
+                    styled, use_container_width=True, hide_index=True,
+                    height=min(38 * len(comp_df) + 80, 600),
+                    column_config={
+                        "Métrique": st.column_config.TextColumn(width="medium"),
+                        p1: st.column_config.NumberColumn(width="small"),
+                        p2: st.column_config.NumberColumn(width="small"),
+                    },
+                )
 
-    # ── Tab 3 : SHAP ──────────────────────────────────────────────────────────
-    with tab3:
-        render_section_header(
-            "Analyse SHAP — Random Forest",
-            "Importance des métriques pour prédire le niveau de la ligue (xG équipe).",
-        )
-
-        if st.button("Lancer l'analyse SHAP", key="shap_btn"):
-            with st.spinner("Entraînement du modèle…"):
-                try:
-                    import shap
-                    from sklearn.ensemble import RandomForestRegressor
-
-                    stat_types = ["standard", "shooting", "passing", "defense",
-                                  "possession", "goal_shot_creation", "misc"]
-                    dfs = load_all_team_season_stats(stat_types)
-
-                    base = dfs["standard"][["league", "season", "team", "Poss"]].copy()
-                    target_col = "xG"
-                    sht = dfs["shooting"]
-                    if target_col not in sht.columns:
-                        st.warning("Colonne xG introuvable.")
-                        st.stop()
-
-                    base = base.merge(sht[["team", "season", "league", target_col]], on=["team", "season", "league"], how="inner")
-
-                    for st_name, df in dfs.items():
-                        if st_name in ("standard", "shooting"):
-                            continue
-                        skip = {"league", "season", "team", "url"}
-                        num_cols = [c for c in df.columns if c not in skip]
-                        sub = df[["team", "season", "league"] + num_cols].copy()
-                        base = base.merge(sub, on=["team", "season", "league"], how="left", suffixes=("", f"_{st_name}"))
-
-                    drop_kw = {"Rank", "Gls", "GA", "PK", "Save%", "CS", "onxG", "OG", "url"}
-                    feat_cols = [
-                        c for c in base.columns
-                        if c not in {"league", "season", "team", target_col}
-                        and not any(k in c for k in drop_kw)
-                    ]
-                    X = base[feat_cols].apply(pd.to_numeric, errors="coerce")
-                    y = pd.to_numeric(base[target_col], errors="coerce")
-                    mask = y.notna() & X.notna().all(axis=1)
-                    X, y = X[mask], y[mask]
-
-                    thresh = 0.5
-                    valid_cols = X.columns[X.isna().mean() < thresh]
-                    X = X[valid_cols].fillna(X[valid_cols].median())
-
-                    rf = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
-                    rf.fit(X, y)
-
-                    explainer = shap.TreeExplainer(rf)
-                    shap_vals = explainer.shap_values(X)
-
-                    mean_abs = np.abs(shap_vals).mean(axis=0)
-                    shap_df = pd.DataFrame({"feature": X.columns, "importance": mean_abs})
-                    shap_df = shap_df.sort_values("importance", ascending=False).head(20)
-
-                    import plotly.graph_objects as go
-                    fig = go.Figure(go.Bar(
-                        x=shap_df["importance"],
-                        y=shap_df["feature"],
-                        orientation="h",
-                        marker_color=COLORS["accent_green"],
-                    ))
-                    from config import PLOTLY_LAYOUT
-                    fig.update_layout(
-                        **PLOTLY_LAYOUT,
-                        title="Top 20 features — impact SHAP moyen",
-                        yaxis=dict(autorange="reversed"),
-                        height=520,
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-
-                except ImportError:
-                    st.error("Installez `shap` : `pip install shap`")
-                except Exception as e:
-                    st.error(f"Erreur SHAP : {e}")
-
-    # ── Tab 4 : Prédiction PPM ────────────────────────────────────────────────
-    with tab4:
-        render_section_header(
-            "Prédiction classement — Points Par Match",
-            "XGBoost entraîné sur les saisons passées, prédit le PPM de la saison courante.",
-        )
-
-        target_season = st.selectbox("Saison à prédire", _available_ppm_seasons(), key="ppm_season")
-
-        if st.button("Lancer la prédiction PPM", key="ppm_btn"):
-            with st.spinner("Entraînement XGBoost…"):
-                try:
-                    import xgboost as xgb
-
-                    pt = load_team_season_stats("playing_time")
-                    if "PPM" not in pt.columns and "PPM_playing_time" not in pt.columns:
-                        possible = [c for c in pt.columns if "PPM" in c or "ppm" in c.lower()]
-                        if not possible:
-                            st.warning("Colonne PPM introuvable dans playing_time. Vérifiez les données.")
-                            st.stop()
-                        ppm_col = possible[0]
-                    else:
-                        ppm_col = "PPM" if "PPM" in pt.columns else "PPM_playing_time"
-
-                    stat_types = ["standard", "shooting", "passing", "defense",
-                                  "possession", "goal_shot_creation", "misc"]
-                    dfs = load_all_team_season_stats(stat_types)
-                    base = pt[["league", "season", "team", ppm_col]].copy()
-
-                    for st_name, df in dfs.items():
-                        skip = {"league", "season", "team", "url"}
-                        num_cols = [c for c in df.columns if c not in skip]
-                        sub = df[["team", "season", "league"] + num_cols].copy()
-                        base = base.merge(sub, on=["team", "season", "league"], how="left", suffixes=("", f"_{st_name}"))
-
-                    drop_kw = {"Rank", "Gls", "GA", "PK", "Save%", "CS", "onxG", "OG", "url", ppm_col}
-                    feat_cols = [
-                        c for c in base.columns
-                        if c not in {"league", "season", "team", ppm_col}
-                        and not any(k in c for k in drop_kw)
-                    ]
-
-                    X = base[feat_cols].apply(pd.to_numeric, errors="coerce")
-                    y = pd.to_numeric(base[ppm_col], errors="coerce")
-
-                    thresh = 0.5
-                    valid_cols = X.columns[X.isna().mean() < thresh]
-                    X = X[valid_cols]
-
-                    train_mask = (base["season"] != target_season) & y.notna() & X.notna().all(axis=1)
-                    pred_mask  = (base["season"] == target_season) & X.notna().all(axis=1)
-
-                    X_train = X[train_mask].fillna(X[train_mask].median())
-                    y_train = y[train_mask]
-                    X_pred  = X[pred_mask].fillna(X[train_mask].median())
-
-                    if len(X_train) < 5:
-                        st.warning("Pas assez de données d'entraînement.")
-                        st.stop()
-
-                    model = xgb.XGBRegressor(n_estimators=200, learning_rate=0.05,
-                                             max_depth=4, random_state=42,
-                                             verbosity=0)
-                    model.fit(X_train, y_train)
-                    preds = model.predict(X_pred)
-
-                    result_df = base[pred_mask][["league", "team"]].copy()
-                    result_df["PPM_prédit"] = preds.round(3)
-                    result_df["Rang_prédit"] = result_df.groupby("league")["PPM_prédit"].rank(ascending=False).astype(int)
-                    result_df = result_df.sort_values(["league", "Rang_prédit"])
-
-                    for lg in result_df["league"].unique():
-                        render_section_header(LEAGUE_LABELS.get(lg, lg))
-                        sub = result_df[result_df["league"] == lg][["Rang_prédit", "team", "PPM_prédit"]]
-                        st.dataframe(
-                            sub.reset_index(drop=True)
-                            .style.format({"PPM_prédit": "{:.3f}"}),
-                            use_container_width=True,
-                        )
-
-                except ImportError:
-                    st.error("Installez `xgboost` : `pip install xgboost`")
-                except Exception as e:
-                    st.error(f"Erreur prédiction : {e}")
+                # Glossaire uniquement si métriques FBref (pas FR)
+                if metric_labels_fr is None:
+                    render_metric_glossary(metrics=common)
 
     render_disclaimer()
 
 
+# ── Back-compat : render() = ancien comportement (les 2 modes en tabs) ───────
+
+def render(season: str, league: str) -> None:
+    """Rétro-compatibilité : appelle les deux modes dans des onglets."""
+    league_filter = None if league == "Toutes les ligues" else league
+    tab1, tab2 = st.tabs(["🏟️ Équipes", "👥 Joueurs"])
+    with tab1:
+        render_clubs(season, league)
+    with tab2:
+        render_players(season, league)
+
+
 # ── Watchlist ────────────────────────────────────────────────────────────────
 
-def _render_watchlist_tab(season: str, league_filter: str | None) -> None:
-    render_section_header(
-        "Ma shortlist",
-        "Liste personnelle de joueurs à suivre. Ajoute-les depuis la page Profil "
-        "Joueur (bouton ☆), puis compare-les ici.",
-    )
-
-    wl = watchlist_get()
-    if not wl:
-        st.info(
-            "Ta shortlist est vide. Va sur **👤 Profil Joueur**, sélectionne un "
-            "joueur et clique sur **☆ Ajouter à ma shortlist**."
-        )
-        return
-
-    # Récupérer les stats pour les joueurs de la watchlist
-    df_wl = pd.DataFrame(wl)
-
-    pdf = load_player_season_stats("standard", [season])
-    if league_filter:
-        pdf = pdf[pdf["league"] == league_filter]
-
-    enriched = df_wl.merge(
-        pdf[["player", "team", "league", "pos", "age", "Gls", "Ast"]],
-        on=["player", "team"], how="left", suffixes=("_wl", ""),
-    )
-
-    enriched = enrich_with_photos(enriched, player_col="player", league=league_filter)
-    enriched = enrich_with_logos(enriched, team_col="team", league=league_filter)
-
-    if "market_value_in_eur" in enriched.columns:
-        enriched["Valeur"] = enriched["market_value_in_eur"].apply(format_value)
-
-    cols = []
-    if "image_url" in enriched.columns: cols.append("image_url")
-    cols += ["player"]
-    if "logo_url" in enriched.columns: cols.append("logo_url")
-    cols += ["team", "league", "pos", "age", "Gls", "Ast"]
-    if "Valeur" in enriched.columns: cols.append("Valeur")
-
-    disp = enriched[[c for c in cols if c in enriched.columns]].rename(columns={
-        "image_url": "Photo", "logo_url": "Logo",
-        "player": "Joueur", "team": "Équipe", "league": "Ligue",
-        "pos": "Position", "age": "Âge",
-        "Gls": "Buts", "Ast": "Passes D.",
-    })
-
-    column_config = {}
-    if "Photo" in disp.columns:
-        column_config["Photo"] = st.column_config.ImageColumn("Photo", width="small")
-    if "Logo" in disp.columns:
-        column_config["Logo"] = st.column_config.ImageColumn("Logo", width="small")
-
-    st.dataframe(
-        disp, use_container_width=True, hide_index=True,
-        height=min(60 * len(disp) + 50, 700),
-        column_config=column_config,
-    )
-
-    # Actions : retirer un joueur, vider la shortlist
-    st.divider()
-    cA, cB = st.columns([3, 1])
-    with cA:
-        names = [f"{w['player']} — {w['team']}" for w in wl]
-        to_remove = st.selectbox("Retirer un joueur", ["—"] + names, key="wl_remove")
-        if to_remove != "—" and st.button("🗑️ Retirer", key="wl_remove_btn"):
-            idx = names.index(to_remove)
-            watchlist_remove(wl[idx]["player"], wl[idx]["team"])
-            st.rerun()
-    with cB:
-        if st.button("🧹 Vider la shortlist", key="wl_clear", type="secondary",
-                     use_container_width=True):
-            watchlist_clear()
-            st.rerun()
-
-    st.caption(
-        f"💡 {len(wl)} joueur(s) en shortlist · La sélection persiste tant que la "
-        f"session est ouverte."
-    )
+# Fonctionnalité watchlist supprimée sur demande utilisateur.

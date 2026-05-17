@@ -68,23 +68,21 @@ def _parse_flat_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path, low_memory=False, encoding="utf-8", errors="replace")
 
 
-def _is_multiheader(path: Path) -> bool:
+def _parse_auto(path: Path) -> pd.DataFrame:
     """
-    Détecte si un CSV est au format soccerdata (double en-tête avec 'Unnamed')
-    ou au format plat généré par le nouveau scraper direct.
+    Parser principal pour les fichiers FB_*_season_stats_*.csv.
+    Tente d'abord le format soccerdata (double en-tête + meta row).
+    Si le résultat est manifestement cassé (pas de colonne 'league'), bascule
+    en parser plat pour gérer les fichiers du futur scraper direct.
     """
     try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            first = f.readline()
-        return first.startswith(",") or "Unnamed" in first
-    except OSError:
-        return True  # par défaut, essayer le parser multiheader
-
-
-def _parse_auto(path: Path) -> pd.DataFrame:
-    """Auto-détecte le format CSV et applique le bon parser."""
-    if _is_multiheader(path):
-        return _parse_multiheader_csv(path)
+        df = _parse_multiheader_csv(path)
+        # Sanity check : un fichier soccerdata valide a toujours 'league'
+        if "league" in df.columns:
+            return df
+    except Exception:
+        pass
+    # Fallback : format plat (scraper direct)
     return _parse_flat_csv(path)
 
 

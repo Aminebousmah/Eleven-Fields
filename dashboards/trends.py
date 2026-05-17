@@ -58,15 +58,20 @@ def render(season: str, league: str) -> None:
         unsafe_allow_html=True,
     )
 
-    t1, t2, t3, t4 = st.tabs([
-        "🎯 xG over/underperformers",
-        "🌟 Jeunes talents",
-        "🧠 Styles atypiques",
-        "📈 Évolution inter-saisons",
-    ])
+    # Tendances simplifiées : on garde uniquement les xG over/underperformers.
+    # (Jeunes talents, Styles atypiques, Évolution inter-saisons retirés.)
 
-    # ── Tab 1 : xG Over/Under ─────────────────────────────────────────────────
-    with t1:
+    # Gate "Afficher"
+    from components.filters import render_show_gate
+    if not render_show_gate(
+        "trends_stats",
+        label="📊  Afficher les tendances",
+        hint="Ajuste la saison et la ligue, puis clique pour générer.",
+    ):
+        return
+
+    # ── xG Over/Underperformers ──────────────────────────────────────────────
+    if True:
         render_section_header(
             "Qui sur-performe ou sous-performe sur ses xG ?",
             "Écart entre buts marqués et xG attendu — indicateur de clinique ou de finition manquée.",
@@ -118,123 +123,10 @@ def render(season: str, league: str) -> None:
                         unsafe_allow_html=True)
             _show_team_table(def_out["worst"], league_f, ["league", "GA"])
 
-    # ── Tab 2 : Jeunes talents ────────────────────────────────────────────────
-    with t2:
-        render_section_header(
-            "Jeunes à fort impact",
-            "Joueurs U21 avec le plus de buts + passes décisives + xAG/2 (min. 900 minutes).",
-        )
-
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            max_age = st.slider("Âge max.", 17, 25, 21, key="trends_age")
-        with c2:
-            min_min = st.slider("Minutes min.", 300, 3000, 900, 100, key="trends_min")
-        with c3:
-            top_n = st.slider("Top N", 5, 30, 15, key="trends_topn")
-
-        young = find_young_stars(season, league_f, max_age=max_age,
-                                  min_minutes=min_min, top_n=top_n)
-        if young.empty:
-            st.info("Pas de données suffisantes.")
-        else:
-            young = enrich_with_photos(young, player_col="player", league=league_f)
-            young = enrich_with_logos(young, team_col="team", league=league_f)
-
-            # Colonne drapeau : URL image via flagcdn.com
-            if "nation" in young.columns:
-                young["flag_url"] = young["nation"].apply(
-                    lambda x: get_flag_url(str(x).split()[-1], size=20) if pd.notna(x) and str(x).strip() else None
-                )
-
-            order = []
-            if "image_url" in young.columns: order.append("image_url")
-            order += ["player"]
-            if "flag_url" in young.columns: order.append("flag_url")
-            if "logo_url" in young.columns: order.append("logo_url")
-            order += ["team", "league", "age", "pos", "Gls", "Ast", "xG", "xAG", "impact"]
-            cols = [c for c in order if c in young.columns]
-
-            disp = young[cols].rename(columns={
-                "image_url": "Photo", "logo_url": "Logo",
-                "flag_url": "Pays",
-                "player": "Joueur", "team": "Équipe", "league": "Ligue",
-                "age": "Âge", "pos": "Position",
-                "Gls": "Buts", "Ast": "Passes D.",
-                "impact": "Score impact",
-            })
-            column_config = {}
-            if "Photo" in disp.columns: column_config["Photo"] = _photo_cfg()
-            if "Logo" in disp.columns: column_config["Logo"] = _logo_cfg()
-            if "Pays" in disp.columns:
-                column_config["Pays"] = st.column_config.ImageColumn("Pays", width="small")
-            if "Score impact" in disp.columns:
-                column_config["Score impact"] = st.column_config.NumberColumn(
-                    "Score impact", format="%.2f",
-                )
-            st.dataframe(
-                disp, hide_index=True, use_container_width=True,
-                column_config=column_config,
-                height=min(60 * len(disp) + 50, 720),
-            )
-
-    # ── Tab 3 : Styles atypiques ──────────────────────────────────────────────
-    with t3:
-        render_section_header(
-            "Équipes au style le plus atypique",
-            "Distance euclidienne au centre de leur cluster de style — une équipe "
-            "atypique est à la fois caractéristique ET distincte.",
-        )
-
-        style = find_style_outliers(season, league_f, top_n=10)
-        if style.empty:
-            st.info("Pas assez de données pour cette analyse.")
-        else:
-            style["Style"] = style["cluster"].map(lambda c: CLUSTER_NAMES.get(c, f"Cluster {c}"))
-            style = enrich_with_logos(style, team_col="team", league=league_f)
-            order = []
-            if "logo_url" in style.columns: order.append("logo_url")
-            order += ["team", "league", "Style", "distance"]
-            disp = style[[c for c in order if c in style.columns]].rename(columns={
-                "logo_url": "Logo", "team": "Équipe", "league": "Ligue",
-                "distance": "Distance au centre",
-            })
-            column_config = {}
-            if "Logo" in disp.columns: column_config["Logo"] = _logo_cfg()
-            column_config["Distance au centre"] = st.column_config.NumberColumn(
-                "Distance au centre", format="%.2f",
-            )
-            st.dataframe(
-                disp, hide_index=True, use_container_width=True,
-                column_config=column_config,
-                height=min(48 * len(disp) + 50, 600),
-            )
-
-            st.caption("💡 Plus la distance est grande, plus le style de jeu est unique dans la ligue.")
-
-    # ── Tab 4 : Évolution inter-saisons ───────────────────────────────────────
-    with t4:
-        render_section_header(
-            "Comparaison inter-saisons",
-            "Qui progresse le plus d'une saison à l'autre ?",
-        )
-
-        if len(SEASONS) < 2:
-            st.info("Il faut au moins 2 saisons pour comparer.")
-        else:
-            c1, c2 = st.columns(2)
-            season_keys = list(SEASONS.keys())
-            with c1:
-                s_prev = st.selectbox("Saison précédente", season_keys,
-                                       index=0, key="trends_prev")
-            with c2:
-                s_curr = st.selectbox("Saison courante", season_keys,
-                                       index=len(season_keys) - 1, key="trends_curr")
-
-            if s_prev == s_curr:
-                st.warning("Choisissez deux saisons différentes.")
-            else:
-                _season_evolution(s_prev, s_curr, league_f)
+    # Sections supprimées sur demande utilisateur :
+    #   - Jeunes talents
+    #   - Styles atypiques
+    #   - Évolution inter-saisons
 
 
 # ── Helpers internes ──────────────────────────────────────────────────────────
