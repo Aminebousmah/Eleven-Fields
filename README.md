@@ -37,7 +37,7 @@ Pas de scraping côté Transfermarkt : on consomme un dataset déjà publié, mi
 
 ### Fonctionnalités phares (inspirées Data'Scout)
 
-- **16 profils de poste** : GK Classique/Releveur · DC Solide/Relanceur · Latéral Déf/Off · Sentinelle, Récupérateur, Box-to-Box, Relayeur, Meneur · Ailier Percutant/Créateur · AC Pivot/Mobile · Buteur Pur. Chaque profil a sa pondération de métriques et son score sur 100.
+- **28 profils de poste** : GK Classique/Releveur/Libéro/Réflexes · DC Stoppeur/Relanceur/Athlétique/Couverture/Moderne · Latéral Déf/Off/Wingback/Inversé · MF Sentinelle/Récupérateur/Régulateur/Box-to-Box/Relayeur/Mezzala/Meneur · Ailier Percutant/Créateur/Inversé · AC Pivot/Mobile · Buteur Pur · Faux 9 · Second Attaquant. Chaque profil a sa pondération de métriques et son score sur 100.
 - **Profil dominant détecté automatiquement** par joueur, avec tagline.
 - **Similarité en % de compatibilité** (au lieu d'une distance brute) pour les joueurs et les clubs.
 - **Stats automatiquement ramenées à /90 minutes** dans le calcul de l'indice.

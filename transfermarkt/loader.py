@@ -16,7 +16,22 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
-DATA_DIR = Path(__file__).parent.parent / "transfermarkt_data"
+def _detect_tm_data_dir() -> Path:
+    """
+    Trouve le dossier transfermarkt_data/.
+    Si on lance l'app depuis un worktree git (.claude/worktrees/xxx/), les CSV
+    ne sont pas là (gitignorés). On remonte alors jusqu'au projet principal.
+    """
+    here = Path(__file__).parent.parent
+    candidates = [here] + list(here.parents)[:4]
+    for d in candidates:
+        target = d / "transfermarkt_data"
+        if target.exists() and any(target.glob("*.csv")):
+            return target
+    return here / "transfermarkt_data"
+
+
+DATA_DIR = _detect_tm_data_dir()
 
 # 1ère division Big 5 uniquement
 BIG5_COMPETITION_IDS: list[str] = ["GB1", "ES1", "L1", "IT1", "FR1"]

@@ -15,8 +15,7 @@ from config import (
 from components.charts import make_multi_radar, make_labeled_percentile_bars
 from components.filters import select_player
 from components.glossary import (
-    render_metric_glossary, render_disclaimer, render_watchlist_button,
-    watchlist_get,
+    render_metric_glossary, render_disclaimer,
 )
 from components.flags import flag_img_html
 from components.kpi_cards import render_kpi_row, render_section_header
@@ -24,7 +23,7 @@ from data.loader import load_player_season_stats
 from data.processor import (
     build_radar_with_context, build_percentiles_labeled, find_similar_players,
     compute_dominant_profile, compute_profile_scores,
-    player_profile_evolution, compare_to_watchlist,
+    player_profile_evolution,
 )
 
 # Module Transfermarkt — optionnel : si dataset absent, fallback silencieux
@@ -63,6 +62,15 @@ def render(season: str, league: str) -> None:
 
     player, team, pos_group = select_player(season, league, key_prefix="player", show_preview=False)
     if not player:
+        return
+
+    # Gate "Afficher" — n'affiche la fiche complète qu'après clic
+    from components.filters import render_show_gate
+    if not render_show_gate(
+        "player_profile",
+        label="📊  Afficher la fiche",
+        hint="Sélectionne ton joueur ci-dessus, puis clique pour générer l'analyse complète.",
+    ):
         return
 
     # Stats standard
@@ -143,10 +151,7 @@ def render(season: str, league: str) -> None:
 
     st.divider()
 
-    # Bouton watchlist juste sous le header
-    render_watchlist_button(player, team, season, league, pos=pos_group)
-
-    tab0, tab_card, tab1, tab2, tab3, tab4, tab_evo, tab_tm, tab_sl, tab_exp = st.tabs([
+    tab0, tab_card, tab1, tab2, tab3, tab4, tab_evo, tab_exp = st.tabs([
         "📊 Indice Data'Scout",
         "🎨 Rapport visuel",
         "🎯 Radar contextualisé",
@@ -154,8 +159,6 @@ def render(season: str, league: str) -> None:
         "📋 Stats complètes",
         "🔁 Joueurs similaires",
         "📈 Évolution multi-saisons",
-        "💶 Transfermarkt",
-        "🎯 vs Ma shortlist",
         "📄 Export rapport",
     ])
 
@@ -254,43 +257,11 @@ def render(season: str, league: str) -> None:
         else:
             sim = enrich_with_photos(sim, player_col="player", league=league_arg)
             sim = enrich_with_logos(sim, team_col="team", league=league_arg)
-            sim.insert(0, "Rang", range(1, len(sim) + 1))
-
             if "market_value_in_eur" in sim.columns:
                 sim["Valeur"] = sim["market_value_in_eur"].apply(format_value)
 
-            base_cols = ["Rang"]
-            if "image_url" in sim.columns: base_cols.append("image_url")
-            base_cols += ["player"]
-            if "logo_url" in sim.columns: base_cols.append("logo_url")
-            base_cols += ["team", "league", "pos", "age", "compat_pct"]
-            if "Valeur" in sim.columns: base_cols.append("Valeur")
-
-            disp = sim[[c for c in base_cols if c in sim.columns]].rename(columns={
-                "image_url": "Photo", "logo_url": "Logo",
-                "player": "Joueur", "team": "Équipe", "league": "Ligue",
-                "pos": "Position", "age": "Âge",
-                "compat_pct": "Compatibilité",
-            })
-
-            column_config = {
-                "Compatibilité": st.column_config.ProgressColumn(
-                    "Compatibilité",
-                    help="Pourcentage de proximité du profil statistique.",
-                    format="%.0f %%",
-                    min_value=0, max_value=100,
-                ),
-            }
-            if "Photo" in disp.columns:
-                column_config["Photo"] = st.column_config.ImageColumn("Photo", width="small")
-            if "Logo" in disp.columns:
-                column_config["Logo"] = st.column_config.ImageColumn("Logo", width="small")
-
-            st.dataframe(
-                disp, use_container_width=True, hide_index=True,
-                height=min(60 * len(disp) + 50, 700),
-                column_config=column_config,
-            )
+            for rank, (_, row) in enumerate(sim.iterrows(), start=1):
+                _render_similar_card(rank, row, season, league_arg)
 
             st.caption(
                 f"💡 Référence : **{player}** ({team}) · "
@@ -300,12 +271,6 @@ def render(season: str, league: str) -> None:
 
     with tab_evo:
         _render_evolution(player, team, pos_group, league_filter)
-
-    with tab_tm:
-        _render_tm_player(player, league_filter)
-
-    with tab_sl:
-        _render_vs_shortlist(player, team, season, league_filter)
 
     with tab_exp:
         _render_export(player, team, pos_group, season, league_filter, league_label, r)
@@ -478,160 +443,135 @@ def _render_evolution(player: str, team: str, pos_group: str,
                  column_config=cfg)
 
 
-# ── Visualisations Transfermarkt ──────────────────────────────────────────────
-
-def _render_tm_player(player: str, league_filter: str | None) -> None:
-    import plotly.graph_objects as go
-
-    render_section_header(
-        "Évolution de la valeur marchande",
-        "Données Transfermarkt — valeur marchande en M€ au fil du temps.",
-    )
-
-    if not TM_AVAILABLE:
-        st.info("Module Transfermarkt non disponible.")
-        return
-
-    with st.spinner("Chargement des données Transfermarkt…"):
-        vh = get_player_value_history(player, fbref_league=league_filter)
-        career = get_player_career_history(player, fbref_league=league_filter)
-
-    # ── Graphique valeur marchande ────────────────────────────────────────────
-    if not vh.empty:
-        vh["val_m"] = vh["market_value_in_eur"] / 1e6
-        peak = vh["val_m"].max()
-        peak_date = vh.loc[vh["val_m"].idxmax(), "date"]
-
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=vh["date"], y=vh["val_m"],
-            mode="lines+markers",
-            line=dict(color=COLORS["accent_green"], width=2.5),
-            marker=dict(size=6, color=COLORS["accent_green"],
-                        line=dict(color="#fff", width=1)),
-            fill="tozeroy",
-            fillcolor="rgba(34,197,94,0.12)",
-            hovertemplate="%{x|%b %Y}<br><b>%{y:.1f} M€</b><extra></extra>",
-        ))
-        # Peak annotation
-        fig.add_annotation(
-            x=peak_date, y=peak,
-            text=f"Pic : {peak:.1f} M€",
-            showarrow=True, arrowhead=2,
-            arrowcolor=COLORS["accent_gold"],
-            font=dict(color=COLORS["accent_gold"], size=11),
-            bgcolor=COLORS["card"], bordercolor=COLORS["accent_gold"],
-            ax=0, ay=-30,
-        )
-
-        layout = {**PLOTLY_LAYOUT}
-        layout["margin"] = dict(l=20, r=20, t=30, b=40)
-        fig.update_layout(
-            **layout,
-            yaxis=dict(title="Valeur marchande (M€)", gridcolor=COLORS["grid"],
-                       zeroline=False, tickformat=".1f"),
-            xaxis=dict(gridcolor=COLORS["grid"]),
-            height=360,
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Mini KPIs
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.metric("Valeur actuelle", f"{vh['val_m'].iloc[-1]:.1f} M€")
-        with c2:
-            st.metric("Valeur maximale", f"{peak:.1f} M€")
-        with c3:
-            first_val = vh["val_m"].iloc[0]
-            last_val = vh["val_m"].iloc[-1]
-            delta = last_val - first_val
-            sign = "+" if delta >= 0 else ""
-            st.metric("Évolution totale", f"{sign}{delta:.1f} M€")
-    else:
-        st.info("Aucune donnée d'évolution de valeur disponible pour ce joueur.")
-
-    st.divider()
-    render_section_header(
-        "Historique de carrière",
-        "Matchs, buts et assists par club et saison.",
-    )
-
-    # ── Tableau carrière ──────────────────────────────────────────────────────
-    if not career.empty:
-        career["Minutes"] = career["Minutes"].apply(
-            lambda v: f"{int(v):,}".replace(",", " ") if pd.notna(v) else "—"
-        )
-        st.dataframe(
-            career, hide_index=True, use_container_width=True,
-            height=min(48 * len(career) + 60, 600),
-        )
-    else:
-        st.info("Aucun historique de carrière disponible.")
-
-
-# ── Comparaison vs Ma shortlist ──────────────────────────────────────────────
-
-def _render_vs_shortlist(player: str, team: str,
-                         season: str, league_filter: str | None) -> None:
-    render_section_header(
-        "Comparaison vs ma shortlist",
-        "Pourcentage de compatibilité statistique du joueur cible avec chaque "
-        "membre de ta shortlist (mêmes métriques de poste).",
-    )
-
-    wl = watchlist_get()
-    if not wl:
-        st.info(
-            "Ta shortlist est vide. Va sur **⚖️ Comparaison → 📋 Ma shortlist** "
-            "ou clique ☆ sur la fiche d'un joueur pour l'y ajouter."
-        )
-        return
-
-    res = compare_to_watchlist(player, team, wl, season, league_filter)
-    if res.empty:
-        st.warning(
-            "Impossible de calculer la compatibilité (joueur cible introuvable "
-            "dans cette saison/ligue ou shortlist incompatible)."
-        )
-        return
-
-    res = enrich_with_photos(res, player_col="player", league=league_filter)
-    res = enrich_with_logos(res, team_col="team", league=league_filter)
-    res.insert(0, "Rang", range(1, len(res) + 1))
-
-    cols = ["Rang"]
-    if "image_url" in res.columns: cols.append("image_url")
-    cols += ["player"]
-    if "logo_url" in res.columns: cols.append("logo_url")
-    cols += ["team", "compat_pct"]
-
-    disp = res[[c for c in cols if c in res.columns]].rename(columns={
-        "image_url": "Photo", "logo_url": "Logo",
-        "player": "Joueur", "team": "Équipe",
-        "compat_pct": "Compatibilité",
-    })
-
-    column_config = {
-        "Compatibilité": st.column_config.ProgressColumn(
-            "Compatibilité", help="Proximité du profil statistique avec le joueur cible.",
-            format="%.0f %%", min_value=0, max_value=100,
-        ),
-    }
-    if "Photo" in disp.columns:
-        column_config["Photo"] = st.column_config.ImageColumn("Photo", width="small")
-    if "Logo" in disp.columns:
-        column_config["Logo"] = st.column_config.ImageColumn("Logo", width="small")
-
-    st.dataframe(
-        disp, hide_index=True, use_container_width=True,
-        height=min(60 * len(disp) + 50, 600), column_config=column_config,
-    )
-
-    st.caption(f"💡 Cible : **{player}** ({team}) · "
-               f"{len(wl)} joueur(s) en shortlist comparés.")
-
-
 # ── Export rapport markdown ──────────────────────────────────────────────────
+
+# ── Carte joueur similaire (style ranking) ───────────────────────────────────
+
+def _render_similar_card(rank: int, row: pd.Series,
+                         season: str, league_filter: str | None) -> None:
+    """Carte horizontale : rang + photo + infos + compat circulaire + bouton fiche."""
+    compat = float(row.get("compat_pct", 0))
+    player_name = row.get("player", "")
+    team_name = row.get("team", "")
+    league_name = row.get("league", "")
+    age = row.get("age", "")
+    pos = row.get("pos", "")
+    photo = row.get("image_url")
+    logo = row.get("logo_url")
+    valeur = row.get("Valeur", "")
+
+    # Couleur du score circulaire selon la valeur
+    if   compat >= 90: score_color = "#00ff99"
+    elif compat >= 75: score_color = "#7cd86b"
+    elif compat >= 60: score_color = "#ffd700"
+    elif compat >= 45: score_color = "#ff9f43"
+    else:              score_color = "#ff4655"
+
+    # Rang
+    if rank == 1:   rank_bg, rank_c = COLORS["accent_gold"], "#1a1a2e"
+    elif rank == 2: rank_bg, rank_c = "#c5cce0", "#1a1a2e"
+    elif rank == 3: rank_bg, rank_c = "#cd853f", "#fff"
+    else:           rank_bg, rank_c = COLORS["card"], COLORS["text_muted"]
+
+    with st.container(border=True):
+        c_rank, c_photo, c_info, c_score, c_btn = st.columns(
+            [0.6, 0.9, 4.4, 0.8, 1.6]
+        )
+
+        with c_rank:
+            st.markdown(
+                f"<div style='background:{rank_bg};color:{rank_c};"
+                f"border-radius:8px;width:46px;height:46px;display:flex;"
+                f"align-items:center;justify-content:center;font-weight:900;"
+                f"font-size:0.95rem'>#{rank}</div>",
+                unsafe_allow_html=True,
+            )
+
+        with c_photo:
+            if photo and pd.notna(photo):
+                st.image(photo, width=60)
+            else:
+                st.markdown(
+                    f"<div style='width:60px;height:60px;border-radius:50%;"
+                    f"background:{COLORS['border']};display:flex;align-items:center;"
+                    f"justify-content:center;font-size:28px'>👤</div>",
+                    unsafe_allow_html=True,
+                )
+
+        with c_info:
+            tags = []
+            if pos and pd.notna(pos):
+                first_pos = str(pos).split(",")[0].strip()
+                tags.append(
+                    f"<span style='background:{COLORS['border']};color:{COLORS['text']};"
+                    f"padding:2px 8px;border-radius:10px;font-size:0.72rem;"
+                    f"font-weight:600;margin-right:5px'>{first_pos}</span>"
+                )
+            if age and pd.notna(age):
+                try:
+                    tags.append(
+                        f"<span style='color:{COLORS['text_muted']};font-size:0.78rem;"
+                        f"margin-right:12px'>👤 {int(float(age))} ans</span>"
+                    )
+                except Exception:
+                    pass
+            if valeur and valeur not in ("—", ""):
+                tags.append(
+                    f"<span style='background:{COLORS['accent_gold']}20;"
+                    f"color:{COLORS['accent_gold']};padding:2px 8px;border-radius:10px;"
+                    f"font-size:0.72rem;font-weight:700;margin-right:5px'>"
+                    f"💰 {valeur}</span>"
+                )
+            meta_html = " ".join(tags) if tags else ""
+
+            logo_html = ""
+            if logo and pd.notna(logo):
+                logo_html = (
+                    f"<img src='{logo}' style='height:18px;width:18px;"
+                    f"object-fit:contain;vertical-align:middle;margin-right:6px'>"
+                )
+
+            st.markdown(
+                f"<div style='display:flex;flex-direction:column;gap:4px'>"
+                f"  <div style='font-size:1.05rem;font-weight:700;color:{COLORS['text']}'>"
+                f"    {player_name}"
+                f"  </div>"
+                f"  <div style='font-size:0.85rem;color:{COLORS['text_muted']}'>"
+                f"    {logo_html}{team_name}"
+                f"    <span style='margin-left:10px'>· {LEAGUE_LABELS.get(league_name, league_name)}</span>"
+                f"  </div>"
+                f"  <div style='margin-top:4px'>{meta_html}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+        with c_score:
+            pct = int(round(compat))
+            bg = COLORS["card"]
+            st.markdown(
+                f"<div style='width:62px;height:62px;border-radius:50%;"
+                f"background:conic-gradient({score_color} 0% {pct}%, {bg} {pct}% 100%);"
+                f"display:flex;align-items:center;justify-content:center'>"
+                f"<div style='width:48px;height:48px;border-radius:50%;"
+                f"background:{COLORS['surface']};display:flex;align-items:center;"
+                f"justify-content:center;font-weight:900;font-size:0.95rem;"
+                f"color:{score_color}'>{pct}%</div></div>",
+                unsafe_allow_html=True,
+            )
+
+        with c_btn:
+            uid = f"{rank}_{player_name}_{team_name}".replace(" ", "_")
+            if st.button("→  Voir la fiche", key=f"btn_sim_{uid}",
+                         use_container_width=True):
+                # Navigation programmatique vers l'Analyse Joueur de ce joueur
+                st.session_state["mode"] = "player"
+                st.session_state["mode_radio"] = "👤  Joueurs"
+                st.session_state["nav_radio"] = "👤  Analyse Joueurs"
+                st.session_state["ctx_player"] = player_name
+                st.session_state["ctx_team"] = team_name
+                st.session_state["_selected_player"] = player_name
+                st.rerun()
+
 
 def _render_export(player: str, team: str, pos_group: str,
                    season: str, league_filter: str | None,
