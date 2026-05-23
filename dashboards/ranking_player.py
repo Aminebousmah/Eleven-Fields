@@ -168,7 +168,7 @@ def _select_profile() -> tuple[str, str]:
 
 
 def _select_field_positions() -> set[str]:
-    """Filtre par position terrain (multiselect)."""
+    """[Conservé pour compat] Filtre par position terrain (multiselect)."""
     options = list(FIELD_POSITIONS.keys())
     labels = {k: f"{k} — {v['label']}" for k, v in FIELD_POSITIONS.items()}
     selected = st.multiselect(
@@ -178,6 +178,125 @@ def _select_field_positions() -> set[str]:
         key="rkp_fpos",
     )
     return set(selected)
+
+
+def _render_field_picker() -> set[str]:
+    """
+    PositionPicker SVG : terrain vertical avec rayures + 14 positions dots.
+    Le SVG est visuel uniquement ; les clics passent par des boutons Streamlit
+    en grille positionnée comme le terrain (compromis Streamlit).
+    """
+    if "rkp_fpos_set" not in st.session_state:
+        st.session_state["rkp_fpos_set"] = set()
+    selected = st.session_state["rkp_fpos_set"]
+
+    # ── Mini-terrain SVG en arrière-plan (visuel, non cliquable) ─────────────
+    _render_pitch_svg_bg(selected)
+
+    # ── Grille de boutons toggle positionnés comme un 4-3-3 ─────────────────
+    layout = [
+        [None, None,  "BU",  None, None],
+        [None, "AG",  "MOC", "AD",  None],
+        [None, None,  "MC",  None, None],
+        [None, None,  "MDC", None, None],
+        ["DG", "DCG", None,  "DCD", "DD"],
+        [None, None,  "G",   None, None],
+    ]
+    for row in layout:
+        cols = st.columns(5, gap="small")
+        for col_obj, pos_key in zip(cols, row):
+            with col_obj:
+                if pos_key is None:
+                    st.markdown('<div style="height:28px"></div>',
+                                unsafe_allow_html=True)
+                    continue
+                is_on = pos_key in selected
+                if st.button(
+                    pos_key, key=f"fp_{pos_key}",
+                    type="primary" if is_on else "secondary",
+                    use_container_width=True,
+                ):
+                    if is_on:
+                        selected.discard(pos_key)
+                    else:
+                        selected.add(pos_key)
+                    st.session_state["rkp_fpos_set"] = selected
+                    st.rerun()
+
+    # Légende
+    n_sel = len(selected)
+    st.markdown(
+        f'<div style="display:flex;align-items:center;gap:10px;margin-top:8px;'
+        f'font-size:10px;color:var(--ink-3)">'
+        f'<span style="width:8px;height:8px;border-radius:50%;'
+        f'background:var(--bg-2);border:1px solid var(--line)"></span> Disponible '
+        f'<span style="width:8px;height:8px;border-radius:50%;'
+        f'background:var(--accent);margin-left:6px"></span> Sélectionné'
+        f'<span style="margin-left:auto">{n_sel} sélection{("s" if n_sel > 1 else "")}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    return selected
+
+
+def _render_pitch_svg_bg(selected: set[str]) -> None:
+    """Mini-terrain SVG en fond (cosmétique, sous les boutons)."""
+    # 14 positions sur le terrain (% x, % y)
+    positions = {
+        "G":   (50, 92), "DG":  (12, 75), "DCG": (36, 78),
+        "DCD": (64, 78), "DD":  (88, 75), "MDC": (50, 60),
+        "MC":  (50, 50), "MOC": (50, 38), "MOG": (28, 38),
+        "MOD": (72, 38), "AG":  (12, 25), "AD":  (88, 25),
+        "SA":  (38, 12), "BU":  (50, 8),
+    }
+    width, height = 240, 320
+    line_color = "rgba(255,255,255,0.30)"
+
+    # Rayures de tonte (8 bandes alternées)
+    stripes = "".join(
+        f'<rect x="0" y="{i * height / 8}" width="{width}" height="{height / 8}" '
+        f'fill="{"#1e4a2e" if i % 2 == 0 else "#234d33"}"/>'
+        for i in range(8)
+    )
+
+    # Dots (14 positions, accent si sélectionné, gris sinon)
+    dots = ""
+    for pos, (px, py) in positions.items():
+        cx = (px / 100) * width
+        cy = (py / 100) * height
+        is_on = pos in selected
+        fill = "#84e06e" if is_on else "rgba(40,42,56,0.85)"
+        stroke = "#84e06e" if is_on else "rgba(255,255,255,0.45)"
+        dots += (
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="9" '
+            f'fill="{fill}" stroke="{stroke}" stroke-width="1.5"/>'
+        )
+
+    # SVG concaténé sur une seule ligne logique (sans indent) — sinon Markdown
+    # interprète les lignes >= 4 espaces comme un bloc de code.
+    svg = (
+        f'<svg width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" '
+        f'style="border-radius:8px;background:#1e4a2e;'
+        f'margin-bottom:8px;display:block">'
+        f'{stripes}'
+        f'<rect x="4" y="4" width="{width-8}" height="{height-8}" '
+        f'fill="none" stroke="{line_color}" stroke-width="1.5"/>'
+        f'<line x1="4" x2="{width-4}" y1="{height/2}" y2="{height/2}" '
+        f'stroke="{line_color}" stroke-width="1.2"/>'
+        f'<circle cx="{width/2}" cy="{height/2}" r="26" fill="none" '
+        f'stroke="{line_color}" stroke-width="1.2"/>'
+        f'<rect x="{(width-90)/2}" y="4" width="90" height="38" '
+        f'fill="none" stroke="{line_color}" stroke-width="1.2"/>'
+        f'<rect x="{(width-90)/2}" y="{height-42}" width="90" height="38" '
+        f'fill="none" stroke="{line_color}" stroke-width="1.2"/>'
+        f'{dots}'
+        f'</svg>'
+    )
+    st.markdown(
+        f'<div style="display:flex;justify-content:center">{svg}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _filter_profiles_by_positions(positions: set[str]) -> list[str]:
@@ -334,72 +453,122 @@ def _render_ranking_card(
 def render(season: str, league: str) -> None:
     league_filter = None if league == "Toutes les ligues" else league
 
+    # ────────────────────────────────────────────────────────────────────────
+    # FILTER RAIL HORIZONTAL (en haut) — Catégorie · Profil · Top N
+    # ────────────────────────────────────────────────────────────────────────
     st.markdown(
-        f"<h2 style='color:{COLORS['text']};margin:6px 0 0 0'>🏆 Classement Joueurs</h2>"
-        f"<div style='color:{COLORS['text_muted']};font-size:0.85rem;margin-bottom:10px'>"
-        f"Découvre les meilleurs joueurs selon chaque profil tactique. "
-        f"Score 0–100 calculé relativement aux joueurs du même poste dans la ligue.</div>",
+        '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;'
+        'margin-bottom:12px;border-radius:10px;background:var(--bg-1);'
+        'border:1px solid var(--line-faint)">'
+        '<span style="font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;'
+        'color:var(--ink-3);padding-right:8px">Catégorie · Profil · Limite</span>'
+        '</div>',
         unsafe_allow_html=True,
     )
 
-    # Bandeau explicatif
-    with st.expander("ℹ️  Comment fonctionnent les classements ?", expanded=False):
+    f_cat, f_prof, f_top = st.columns([2, 3, 3])
+    with f_cat:
+        cats = ["Toutes catégories"] + PROFILE_CATEGORIES
+        category = st.selectbox("Catégorie", cats, key="rkp_cat",
+                                 label_visibility="collapsed")
+    with f_prof:
+        if category == "Toutes catégories":
+            profile_name = ""
+            st.selectbox("Profil", ["—  Sélectionne d'abord une catégorie  —"],
+                         disabled=True, label_visibility="collapsed")
+        else:
+            profile_options = [
+                n for n, c in PLAYER_PROFILES.items()
+                if c.get("category") == category
+            ]
+            profile_name = st.selectbox(
+                "Profil", profile_options, key="rkp_prof",
+                label_visibility="collapsed",
+            )
+    with f_top:
+        # 4 boutons chips Top N
+        cN1, cN2, cN3, cN4 = st.columns(4)
+        if "rkp_topn" not in st.session_state:
+            st.session_state["rkp_topn"] = 20
+        cur_n = st.session_state["rkp_topn"]
+        for idx, (col_n, n_val) in enumerate(zip([cN1, cN2, cN3, cN4],
+                                                  [10, 25, 50, 100])):
+            with col_n:
+                if st.button(
+                    f"Top {n_val}",
+                    key=f"rkp_n{n_val}",
+                    type="primary" if cur_n == n_val else "secondary",
+                    use_container_width=True,
+                ):
+                    st.session_state["rkp_topn"] = n_val
+                    st.rerun()
+    top_n = st.session_state.get("rkp_topn", 20)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # LAYOUT 2 COLONNES : sidebar filtres avancés / content cards
+    # ────────────────────────────────────────────────────────────────────────
+    col_sidebar, col_content = st.columns([1.4, 5], gap="medium")
+
+    with col_sidebar:
         st.markdown(
-            f"""
-- Chaque joueur reçoit un **score 0–100** par profil tactique (ex. *Défenseur Stoppeur*).
-- Le score est la **moyenne pondérée des percentiles** des métriques du profil
-  par rapport aux joueurs du même groupe de poste (GK / DF / MF / FW) ayant ≥ 500 min.
-- Un Ailier Buteur de Premier League aura souvent un score plus élevé qu'un Ailier
-  Buteur de Ligue 2 — le pool de comparaison change selon le filtre Ligue.
-- Le bouton **Radar** affiche les percentiles détaillés du joueur sur les métriques
-  du profil. **Voir la fiche** te redirige sur la page d'analyse complète.
-            """
-        )
-
-    st.divider()
-
-    # ── Layout : filtres à gauche, classement à droite ──────────────────────
-    col_filters, col_results = st.columns([1.2, 4], gap="medium")
-
-    # ── Filtres ───────────────────────────────────────────────────────────────
-    with col_filters:
-        st.markdown(
-            f"<div style='font-weight:700;color:{COLORS['text']};font-size:1rem;"
-            f"margin-bottom:8px'>🎚️  Filtres</div>",
+            '<div class="ef-card" style="padding:14px">'
+            '<div style="display:flex;align-items:center;gap:6px;'
+            'margin-bottom:12px">'
+            '<span style="font-size:14px">▽</span>'
+            '<span style="font-size:14px;font-weight:600;color:var(--ink-0)">'
+            'Filtres de classement</span></div>',
             unsafe_allow_html=True,
         )
 
-        category, profile_name = _select_profile()
+        # Positions terrain (mini grille style 4-3-3 — boutons toggle)
+        st.markdown(
+            '<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;'
+            'color:var(--ink-3);margin-bottom:6px">Postes sur le terrain</div>',
+            unsafe_allow_html=True,
+        )
+        field_positions = _render_field_picker()
 
-        st.markdown("**Position sur le terrain**")
-        field_positions = _select_field_positions()
-
-        st.markdown("**Tranche d'âge**")
+        st.markdown(
+            '<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;'
+            'color:var(--ink-3);margin:14px 0 4px">Tranche d\'âge</div>',
+            unsafe_allow_html=True,
+        )
         age_range = st.slider(
             "Âge", 15, 45, (16, 40),
             key="rkp_age", label_visibility="collapsed",
         )
 
-        st.markdown("**Minutes jouées**")
+        st.markdown(
+            '<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;'
+            'color:var(--ink-3);margin:14px 0 4px">Minutes jouées (min.)</div>',
+            unsafe_allow_html=True,
+        )
         min_minutes = st.slider(
             "Minutes min.", 0, 4000, 500, 100,
             key="rkp_min", label_visibility="collapsed",
         )
 
-        st.markdown("**Top N**")
-        top_n = st.select_slider(
-            "Top N", options=[10, 20, 50, 100, 250], value=20,
-            key="rkp_topn", label_visibility="collapsed",
-        )
+        # Info collapsible
+        with st.expander("ℹ️  Comment ça marche ?", expanded=False):
+            st.markdown(
+                "Indice de performance calculé par profil tactique, pondéré par "
+                "le niveau du championnat. Un joueur de Premier League sera "
+                "souvent classé plus haut qu'un joueur d'une ligue mineure à "
+                "profil équivalent."
+            )
 
-    # ── Résultats ─────────────────────────────────────────────────────────────
-    with col_results:
-        # Gate "Afficher" : on n'affiche le classement qu'après clic
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Résultats ────────────────────────────────────────────────────────────
+    with col_content:
+        # Gate "Afficher"
         from components.filters import render_show_gate
         if not render_show_gate(
             "ranking_player",
             label="🏆  Générer le classement",
+            primary_text="Configure ton classement",
             hint="Choisis catégorie, profil et filtres puis clique pour générer.",
+            icon="☷",
         ):
             return
 
@@ -457,11 +626,12 @@ def render(season: str, league: str) -> None:
             ages = pd.to_numeric(scores_df["age"], errors="coerce")
             scores_df = scores_df[ages.between(age_range[0], age_range[1])]
 
-        # Filtre positions (si profil unique sélectionné)
-        if profile_name and field_positions:
-            # On garde uniquement si la pos FBref du joueur intersecte les positions cibles
-            # Approximation simple : on conserve tout (le profil a déjà ses field_positions cohérentes)
-            pass
+        full_count = len(scores_df)
+        med_min = (
+            int(pd.to_numeric(scores_df["Min"], errors="coerce").median())
+            if "Min" in scores_df.columns and not scores_df.empty else 0
+        )
+        avg_score = scores_df["score"].mean() if not scores_df.empty else 0
 
         scores_df = scores_df.sort_values("score", ascending=False).head(top_n).reset_index(drop=True)
 
@@ -469,14 +639,44 @@ def render(season: str, league: str) -> None:
             st.info("Aucun joueur après filtres.")
             return
 
-        # En-tête résultats
+        # ── Header profil tactique (style mockup 4) ──────────────────────────
+        profile_obj = PLAYER_PROFILES.get(profile_name, {})
+        tagline = profile_obj.get("tagline", "")
+
         st.markdown(
-            f"<div style='color:{COLORS['text_muted']};font-size:0.85rem;"
-            f"margin-bottom:8px'>"
-            f"<b style='color:{COLORS['text']}'>{len(scores_df)} joueur(s)</b> "
-            f"· Profil : <b>{profile_name or 'multi-profils'}</b> "
-            f"· Ligue : {LEAGUE_LABELS.get(league_filter, league_filter or 'Big 5')}"
-            f"</div>",
+            f'<div style="display:flex;align-items:flex-start;gap:14px;'
+            f'padding:14px 16px;margin-bottom:12px;border-radius:10px;'
+            f'background:var(--bg-1);border:1px solid var(--line-faint)">'
+            f'  <div style="flex:1;min-width:0">'
+            f'    <div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;'
+            f'color:var(--ink-3);margin-bottom:4px">Profil tactique</div>'
+            f'    <div style="font-size:22px;font-weight:700;color:var(--ink-0);'
+            f'letter-spacing:-.01em">{profile_name or "Multi-profils"}</div>'
+            f'    <div style="font-size:12px;color:var(--ink-3);margin-top:4px;'
+            f'line-height:1.4">{tagline}</div>'
+            f'  </div>'
+            f'  <div style="display:grid;grid-template-columns:repeat(3,auto);'
+            f'gap:18px;align-items:center">'
+            f'    <div style="text-align:center">'
+            f'      <div style="font-size:9px;letter-spacing:.14em;text-transform:uppercase;'
+            f'color:var(--ink-3)">Joueurs match</div>'
+            f'      <div style="font-size:20px;font-weight:600;color:var(--ink-0);'
+            f'font-family:ui-monospace,monospace">{full_count}</div>'
+            f'    </div>'
+            f'    <div style="text-align:center">'
+            f'      <div style="font-size:9px;letter-spacing:.14em;text-transform:uppercase;'
+            f'color:var(--ink-3)">Min médiane</div>'
+            f'      <div style="font-size:20px;font-weight:600;color:var(--ink-0);'
+            f'font-family:ui-monospace,monospace">{med_min:,}'.replace(",", " ") + '</div>'
+            f'    </div>'
+            f'    <div style="text-align:center">'
+            f'      <div style="font-size:9px;letter-spacing:.14em;text-transform:uppercase;'
+            f'color:var(--ink-3)">Score moy.</div>'
+            f'      <div style="font-size:20px;font-weight:600;color:var(--ink-0);'
+            f'font-family:ui-monospace,monospace">{avg_score:.0f}</div>'
+            f'    </div>'
+            f'  </div>'
+            f'</div>',
             unsafe_allow_html=True,
         )
 

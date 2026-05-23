@@ -273,11 +273,27 @@ def render(season: str = None, league: str = "Toutes les ligues") -> None:
 def _run_analysis_and_save(season: str, league: str) -> dict | None:
     """Lance le fetch RSS + Claude Haiku, sauvegarde en cache JSON, retourne le payload."""
 
-    try:
-        api_key = st.secrets["anthropic"]["api_key"]
-    except Exception:
+    import os
+    api_key = None
+    # 1) Variable d'environnement
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    # 2) Format plat : ANTHROPIC_API_KEY = "..."
+    if not api_key:
+        try:
+            api_key = st.secrets.get("ANTHROPIC_API_KEY", None)
+        except Exception:
+            pass
+    # 3) Format nesté : [anthropic] api_key = "..."
+    if not api_key:
+        try:
+            api_key = st.secrets["anthropic"]["api_key"]
+        except Exception:
+            pass
+    if not api_key:
         st.error(
-            "Clé API Anthropic introuvable dans `.streamlit/secrets.toml`.\n"
+            "Clé API Anthropic introuvable. Ajoute dans `.streamlit/secrets.toml` :\n"
+            "```toml\nANTHROPIC_API_KEY = \"sk-ant-...\"\n```\n"
+            "ou bien :\n"
             "```toml\n[anthropic]\napi_key = \"sk-ant-...\"\n```"
         )
         return None

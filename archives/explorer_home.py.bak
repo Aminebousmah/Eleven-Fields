@@ -1,0 +1,262 @@
+"""
+Page Explorer — Accueil (landing page).
+
+UX :
+  - Hero : titre + recherche centrale
+  - Cards "Que voulez-vous faire ?" : Découvrir / Comparer / Composer XI / Liste
+  - Section "Récemment vus" (depuis session_state)
+  - Section "Joueurs populaires de la saison" (top buteurs, créateurs)
+
+Le but : un fan ouvre l'app, tape un nom, accède à la fiche en 2 clics max.
+"""
+from __future__ import annotations
+
+from typing import Callable, Optional
+
+import pandas as pd
+import streamlit as st
+
+from config import COLORS, LEAGUE_LABELS, SEASONS
+from data.loader import load_player_season_stats, load_team_season_stats
+
+# Transfermarkt optionnel (photos / logos pour les cartes joueur)
+try:
+    from transfermarkt.matcher import (
+        match_player, get_club_logo, format_value,
+    )
+    _TM_OK = True
+except Exception:
+    _TM_OK = False
+    def match_player(*a, **kw): return None
+    def get_club_logo(*a, **kw): return None
+    def format_value(v): return "—"
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _add_recent(kind: str, name: str, team: str | None = None) -> None:
+    """Ajoute une entité à l'historique (max 8)."""
+    recents: list = st.session_state.setdefault("recents", [])
+    entry = {"kind": kind, "name": name, "team": team}
+    # Dédupliquer
+    recents = [e for e in recents if not (e["kind"] == kind and e["name"] == name)]
+    recents.insert(0, entry)
+    st.session_state["recents"] = recents[:8]
+
+
+def _hero(goto: Callable) -> None:
+    """Hero section : titre + recherche centrale."""
+    st.markdown(
+        f"""
+<div style="text-align:center;padding:24px 0 8px 0">
+  <div style="font-size:2.6rem;font-weight:900;line-height:1.1;
+              background:linear-gradient(90deg,{COLORS['accent_green']},{COLORS['accent_blue']});
+              -webkit-background-clip:text;-webkit-text-fill-color:transparent">
+    Explore le football par la data
+  </div>
+  <div style="color:{COLORS['text_muted']};font-size:1rem;margin-top:8px;
+              max-width:640px;margin-left:auto;margin-right:auto">
+    Recherche un joueur ou une équipe pour ouvrir sa fiche analytique,
+    ou choisis une action ci-dessous.
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _universal_search(season: str, league: str, goto: Callable) -> None:
+    """
+    Recherche universelle joueurs + équipes.
+    Routage automatique : si le résultat sélectionné est un joueur → goto player,
+    sinon goto team.
+    """
+    league_filter = None if league == "Toutes les ligues" else league
+
+    # Charge les options (cached)
+    @st.cache_data(show_spinner=False)
+    def _search_index(season: str, league_filter: str | None) -> pd.DataFrame:
+        std = load_player_season_stats("standard", [season])
+        if league_filter:
+            std = std[std["league"] == league_filter]
+        players = std[["player", "team", "league"]].dropna().drop_duplicates()
+        players["kind"] = "player"
+
+        team_std = load_team_season_stats("standard", [season])
+        if league_filter:
+            team_std = team_std[team_std["league"] == league_filter]
+        teams = team_std[["team", "league"]].dropna().drop_duplicates()
+        teams["player"] = teams["team"]
+        teams["kind"] = "team"
+
+        return pd.concat([players, teams], ignore_index=True)
+
+    idx = _search_index(season, league_filter)
+    if idx.empty:
+        st.warning("Aucune donnée disponible pour cette saison/ligue.")
+        return
+
+    # Construction des options de l'autocomplete
+    def _format_option(row) -> str:
+        if row["kind"] == "player":
+            return f"👤  {row['player']}  ·  {row['team']}"
+        return f"🏟️  {row['team']}"
+
+    idx = idx.copy()
+    idx["__label"] = idx.apply(_format_option, axis=1)
+    options = [""] + idx["__label"].tolist()
+
+    # Sélecteur centré (col layout)
+    col_a, col_b, col_c = st.columns([1, 3, 1])
+    with col_b:
+        choice = st.selectbox(
+            "🔍 Rechercher",
+            options=options,
+            index=0,
+            placeholder="Rechercher un joueur ou une équipe…",
+            label_visibility="collapsed",
+            key="universal_search",
+        )
+
+    if choice:
+        sel = idx[idx["__label"] == choice].iloc[0]
+        if sel["kind"] == "player":
+            _add_recent("player", sel["player"], sel["team"])
+            goto("explorer", "player",
+                 ctx_player=sel["player"], ctx_team=sel["team"])
+        else:
+            _add_recent("team", sel["team"])
+            goto("explorer", "team", ctx_team=sel["team"])
+
+
+def _action_cards(goto: Callable) -> None:
+    """4 cards d'action principale."""
+    st.markdown("<div style='margin-top:30px'></div>", unsafe_allow_html=True)
+    cols = st.columns(4)
+    actions = [
+        ("👤", "Découvrir un joueur",
+         "Recherche, radar et profils similaires.",
+         "explorer", "player", COLORS["accent_green"]),
+        ("⚔️", "Comparer deux joueurs",
+         "Duel statistique côte à côte.",
+         "explorer", "compare", COLORS["accent_blue"]),
+        ("🧩", "Composer un XI",
+         "Construis ton onze idéal sur 7 formations.",
+         "explorer", "lineup", COLORS["accent_gold"]),
+        ("📋", "Parcourir la base",
+         "Tableaux complets, tri et filtres.",
+         "explorer", "database", COLORS["accent_red"]),
+    ]
+    for col, (icon, title, desc, route, sub, color) in zip(cols, actions):
+        with col:
+            with st.container(border=True):
+                st.markdown(
+                    f"<div style='font-size:2rem'>{icon}</div>"
+                    f"<div style='font-size:1rem;font-weight:700;color:{color};"
+                    f"margin-top:4px'>{title}</div>"
+                    f"<div style='font-size:0.82rem;color:{COLORS['text_muted']};"
+                    f"margin-top:6px;min-height:42px'>{desc}</div>",
+                    unsafe_allow_html=True,
+                )
+                if st.button("Ouvrir", key=f"act_{sub}", use_container_width=True):
+                    goto(route, sub)
+
+
+def _recent_section(goto: Callable) -> None:
+    """Affiche les 4 entités les plus récemment vues."""
+    recents = st.session_state.get("recents", [])
+    if not recents:
+        return
+
+    st.markdown("<div style='margin-top:32px'></div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='color:{COLORS['text']};font-weight:700;font-size:1.05rem;"
+        f"margin-bottom:10px'>Récemment consultés</div>",
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns(min(len(recents), 4))
+    for col, entry in zip(cols, recents[:4]):
+        with col:
+            with st.container(border=True):
+                icon = "👤" if entry["kind"] == "player" else "🏟️"
+                sub  = entry.get("team") or ""
+                st.markdown(
+                    f"<div style='font-size:1.2rem'>{icon}</div>"
+                    f"<div style='font-weight:600;color:{COLORS['text']};"
+                    f"margin-top:2px'>{entry['name']}</div>"
+                    f"<div style='font-size:0.78rem;color:{COLORS['text_muted']}'>"
+                    f"{sub}</div>",
+                    unsafe_allow_html=True,
+                )
+                key = f"rec_{entry['kind']}_{entry['name']}"
+                if st.button("Voir", key=key, use_container_width=True):
+                    if entry["kind"] == "player":
+                        goto("explorer", "player",
+                             ctx_player=entry["name"], ctx_team=entry["team"])
+                    else:
+                        goto("explorer", "team", ctx_team=entry["name"])
+
+
+def _trending_players(season: str, league: str, goto: Callable) -> None:
+    """Top 5 joueurs : meilleurs scorers de la saison sélectionnée."""
+    league_filter = None if league == "Toutes les ligues" else league
+
+    std = load_player_season_stats("standard", [season])
+    if league_filter:
+        std = std[std["league"] == league_filter]
+    if std.empty or "Gls" not in std.columns:
+        return
+
+    df = std.copy()
+    df["Gls"] = pd.to_numeric(df["Gls"], errors="coerce")
+    # Filtre minutes pour éviter les penalty takers à 1 match
+    if "Min" in df.columns:
+        df["Min"] = pd.to_numeric(df["Min"], errors="coerce")
+        df = df[df["Min"] >= 900]
+    top = df.sort_values("Gls", ascending=False).head(5)
+
+    if top.empty:
+        return
+
+    st.markdown("<div style='margin-top:24px'></div>", unsafe_allow_html=True)
+    label = LEAGUE_LABELS.get(league_filter, league_filter or "Big 5")
+    st.markdown(
+        f"<div style='color:{COLORS['text']};font-weight:700;font-size:1.05rem;"
+        f"margin-bottom:10px'>Top buteurs · {label} · {SEASONS.get(season, season)}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns(5)
+    for col, (_, r) in zip(cols, top.iterrows()):
+        with col:
+            with st.container(border=True):
+                rank_color = COLORS["accent_green"]
+                st.markdown(
+                    f"<div style='display:flex;justify-content:space-between;"
+                    f"align-items:flex-start'>"
+                    f"<div style='font-weight:700;color:{COLORS['text']};"
+                    f"font-size:0.92rem'>{r['player']}</div>"
+                    f"<div style='font-weight:900;color:{rank_color};"
+                    f"font-size:1.4rem;line-height:1'>{int(r['Gls'])}</div>"
+                    f"</div>"
+                    f"<div style='font-size:0.76rem;color:{COLORS['text_muted']};"
+                    f"margin-top:2px'>{r['team']}</div>",
+                    unsafe_allow_html=True,
+                )
+                key = f"top_{r['player']}_{r['team']}"
+                if st.button("Profil", key=key, use_container_width=True):
+                    _add_recent("player", r["player"], r["team"])
+                    goto("explorer", "player",
+                         ctx_player=r["player"], ctx_team=r["team"])
+
+
+# ── Render ────────────────────────────────────────────────────────────────────
+
+def render(season: str, league: str, goto: Callable) -> None:
+    _hero(goto)
+    _universal_search(season, league, goto)
+    _action_cards(goto)
+    _recent_section(goto)
+    _trending_players(season, league, goto)
