@@ -16,8 +16,9 @@ from components.charts import make_peer_scatter, make_bar_comparison
 from data.loader import load_team_season_stats, load_player_season_stats
 from data.processor import (
     find_xg_outliers, find_defensive_outliers, find_young_stars,
-    find_style_outliers,
+    find_style_outliers, find_player_xg_outliers,
 )
+from components.design import card_open, card_close, pct_color_css
 
 try:
     from transfermarkt.matcher import enrich_with_logos, enrich_with_photos, format_value
@@ -51,82 +52,319 @@ def _show_team_table(df, league, cols_after_logo, **fmt) -> None:
 def render(season: str, league: str) -> None:
     league_f = None if league == "Toutes les ligues" else league
 
+    # ── Filter rail horizontal (mockup 5) ────────────────────────────────────
     st.markdown(
-        f"<h2 style='color:{COLORS['text']};margin-bottom:0'>🔥 Tendances</h2>"
-        f"<div style='color:{COLORS['text_muted']};font-size:0.85rem;margin-bottom:16px'>"
-        f"Patterns & insights auto-détectés · {LEAGUE_LABELS.get(league, league)} · {season}</div>",
+        '<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;'
+        'margin-bottom:14px;border-radius:10px;background:var(--bg-1);'
+        'border:1px solid var(--line-faint)">'
+        '<span style="font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;'
+        'color:var(--ink-3);margin-right:4px">Tendances · sur/sous-performeurs xG</span>'
+        '</div>',
         unsafe_allow_html=True,
     )
 
-    # Tendances simplifiées : on garde uniquement les xG over/underperformers.
-    # (Jeunes talents, Styles atypiques, Évolution inter-saisons retirés.)
-
-    # Gate "Afficher"
+    # Gate empty state
     from components.filters import render_show_gate
     if not render_show_gate(
         "trends_stats",
         label="📊  Afficher les tendances",
-        hint="Ajuste la saison et la ligue, puis clique pour générer.",
+        primary_text="Configure tes filtres",
+        hint="Ajuste saison et ligue dans le bouton ⚙ ci-dessus, puis clique pour générer.",
+        icon="△",
     ):
         return
 
-    # ── xG Over/Underperformers ──────────────────────────────────────────────
-    if True:
-        render_section_header(
-            "Qui sur-performe ou sous-performe sur ses xG ?",
-            "Écart entre buts marqués et xG attendu — indicateur de clinique ou de finition manquée.",
+    # ── 2 colonnes : ↑ Sur-performeurs / ↓ Sous-performeurs ─────────────────
+    outliers = find_player_xg_outliers(season, league_f, top_n=5, min_minutes=600)
+
+    c_over, c_under = st.columns(2, gap="medium")
+
+    with c_over:
+        n_over = len(outliers["over"])
+        st.markdown(
+            card_open(
+                "↑  Sur-performeurs xG",
+                actions_html=f'<span style="color:var(--ink-3);font-size:11px">{n_over} joueurs</span>',
+            ),
+            unsafe_allow_html=True,
         )
+        if outliers["over"].empty:
+            st.markdown(
+                '<div style="font-size:12px;color:var(--ink-3);padding:18px 0;'
+                'text-align:center">Pas de données.</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            for _, row in outliers["over"].iterrows():
+                _render_xg_outlier_row(row, sign="+")
+        st.markdown(card_close(), unsafe_allow_html=True)
 
-        outliers = find_xg_outliers(season, league_f, top_n=5)
-        c1, c2 = st.columns(2)
-
-        with c1:
-            st.markdown(f"<div style='color:{COLORS['accent_green']};font-weight:700'>✅ Surperformeurs</div>",
-                        unsafe_allow_html=True)
-            if not outliers["over"].empty:
-                _small_bar(outliers["over"], "team", "Gls-xG", COLORS["accent_green"])
-                _show_team_table(outliers["over"], league_f, ["Gls", "xG", "Gls-xG"])
-            else:
-                st.info("Données indisponibles.")
-
-        with c2:
-            st.markdown(f"<div style='color:{COLORS['accent_red']};font-weight:700'>❌ Sous-performeurs</div>",
-                        unsafe_allow_html=True)
-            if not outliers["under"].empty:
-                _small_bar(outliers["under"], "team", "Gls-xG", COLORS["accent_red"])
-                _show_team_table(outliers["under"], league_f, ["Gls", "xG", "Gls-xG"])
-            else:
-                st.info("Données indisponibles.")
-
-        # Scatter global
-        st.divider()
-        render_section_header(
-            "xG vs Buts — toutes les équipes",
-            "Points au-dessus de la diagonale = surperformance, en-dessous = sous-performance.",
+    with c_under:
+        n_under = len(outliers["under"])
+        st.markdown(
+            card_open(
+                "↓  Sous-performeurs xG",
+                actions_html=f'<span style="color:var(--ink-3);font-size:11px">{n_under} joueurs</span>',
+            ),
+            unsafe_allow_html=True,
         )
-        _xg_vs_goals_scatter(season, league_f)
+        if outliers["under"].empty:
+            st.markdown(
+                '<div style="font-size:12px;color:var(--ink-3);padding:18px 0;'
+                'text-align:center">Pas de données.</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            for _, row in outliers["under"].iterrows():
+                _render_xg_outlier_row(row, sign="-")
+        st.markdown(card_close(), unsafe_allow_html=True)
 
-        # Défense : over/under
-        st.divider()
-        render_section_header(
-            "Meilleures / pires défenses",
-            "Classement direct par buts encaissés.",
+    # ── Section Intelligence Médias (Claude Haiku) ──────────────────────────
+    st.markdown('<div style="height:18px"></div>', unsafe_allow_html=True)
+    _render_media_feed(outliers, season, league_f)
+
+
+# Flux médias mock (mockup 5) — à brancher sur vrai RSS + Claude Haiku plus tard
+_NEWS_MOCK = [
+    {"source": "Marca", "club": "Real Madrid",
+     "title": "Mbappé décisif au Bernabéu, son meilleur match cette saison",
+     "sentiment": "pos", "tag": "Performance", "delay": "il y a 12 min"},
+    {"source": "L'Équipe", "club": "PSG",
+     "title": "Dembélé prolongé jusqu'en 2028, signal fort de la direction",
+     "sentiment": "pos", "tag": "Tactique", "delay": "il y a 38 min"},
+    {"source": "Sky Sports", "club": "Arsenal",
+     "title": "Saka victime d'une lésion mineure, indisponible 2 à 3 semaines",
+     "sentiment": "neg", "tag": "Blessure", "delay": "il y a 1h"},
+    {"source": "Gazzetta", "club": "Inter",
+     "title": "Lautaro : « Le Scudetto se joue dans les détails maintenant »",
+     "sentiment": "neu", "tag": "Mercato", "delay": "il y a 2h"},
+    {"source": "Bild", "club": "Bayern",
+     "title": "Musiala revient à l'entraînement collectif",
+     "sentiment": "pos", "tag": "Récompense", "delay": "il y a 3h"},
+    {"source": "Mundo Dep.", "club": "FC Barcelona",
+     "title": "Yamal nommé pour le Golden Boy 2026",
+     "sentiment": "pos", "tag": "Polémique", "delay": "il y a 4h"},
+]
+
+
+def _render_media_feed(outliers: dict, season: str, league_f: str | None) -> None:
+    """Intelligence Médias : 6 cards générées par Claude Haiku à partir des outliers réels."""
+    # Statut clé API
+    import os
+    has_key = bool(
+        os.environ.get("ANTHROPIC_API_KEY")
+        or (st.secrets.get("ANTHROPIC_API_KEY", None) if hasattr(st, "secrets") else None)
+    )
+    badge_html = (
+        '<span class="ef-badge solid" style="background:var(--good);color:var(--accent-ink)">Claude Haiku</span>'
+        if has_key else
+        '<span class="ef-badge" style="color:var(--warn)">Mode fallback</span>'
+    )
+
+    st.markdown(
+        card_open("Intelligence Médias · analysé par Haiku",
+                  actions_html=badge_html
+                               + ' &nbsp;<span style="color:var(--ink-3);font-size:11px">↻ cache 1h</span>'),
+        unsafe_allow_html=True,
+    )
+
+    items = _generate_media_intel(outliers, season, league_f, has_key)
+
+    # Grille 2 colonnes
+    cols = st.columns(2, gap="medium")
+    for i, news in enumerate(items):
+        with cols[i % 2]:
+            _render_news_card(news)
+
+    st.markdown(card_close(), unsafe_allow_html=True)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _generate_media_intel(_outliers: dict, season: str, league_f: str | None, has_key: bool) -> list[dict]:
+    """Appel Claude Haiku pour générer 6 mini-news à partir des outliers xG réels.
+    Fallback sur _NEWS_MOCK si pas de clé ou erreur."""
+    if not has_key:
+        return _NEWS_MOCK
+
+    over = _outliers.get("over", pd.DataFrame())
+    under = _outliers.get("under", pd.DataFrame())
+    if (over is None or over.empty) and (under is None or under.empty):
+        return _NEWS_MOCK
+
+    def _rows(df, kind):
+        out = []
+        if df is None or df.empty:
+            return out
+        for _, r in df.head(4).iterrows():
+            try:
+                out.append({
+                    "kind": kind,
+                    "player": str(r.get("player", "")),
+                    "team": str(r.get("team", "")),
+                    "league": str(r.get("league", "")),
+                    "Gls": int(round(float(r.get("Gls", 0)))),
+                    "xG": round(float(r.get("xG", 0)), 1),
+                    "diff": round(float(r.get("Gls-xG", 0)), 1),
+                })
+            except Exception:
+                continue
+        return out
+
+    data = {
+        "season": season,
+        "league": league_f or "Big 5",
+        "over_performers": _rows(over, "over"),
+        "under_performers": _rows(under, "under"),
+    }
+
+    prompt = (
+        "Tu es un analyste data football. À partir des données réelles d'écart "
+        "buts/xG ci-dessous, génère exactement 6 mini-news courtes en français "
+        "(style brève sportive, 1 phrase chacune). Mélange sur-performeurs et "
+        "sous-performeurs. Chaque news doit citer le joueur, son club, et un "
+        "chiffre clé (buts, xG ou écart). Pas d'émojis. Pas de hashtags.\n\n"
+        f"DONNÉES :\n{data}\n\n"
+        "Réponds UNIQUEMENT par un tableau JSON valide, format strict :\n"
+        '[{"source":"<nom média plausible: L\'Équipe, Marca, Sky Sports, Gazzetta, Bild, Mundo Dep., The Athletic>",'
+        '"club":"<club exact>",'
+        '"title":"<1 phrase, max 110 caractères, chiffre en évidence>",'
+        '"sentiment":"<pos|neg|neu>",'
+        '"tag":"<Performance|Finition|Efficacité|Forme|Inefficacité|Statistique>",'
+        '"delay":"<il y a Xmin/Xh>"}]\n'
+        "Aucun texte avant ou après le JSON."
+    )
+
+    try:
+        import anthropic
+        import os
+        import json
+        import re
+        api_key = (
+            os.environ.get("ANTHROPIC_API_KEY")
+            or (st.secrets.get("ANTHROPIC_API_KEY", None) if hasattr(st, "secrets") else None)
         )
-        def_out = find_defensive_outliers(season, league_f, top_n=5)
-        c3, c4 = st.columns(2)
-        with c3:
-            st.markdown(f"<div style='color:{COLORS['accent_green']};font-weight:700'>🛡️ Meilleures défenses</div>",
-                        unsafe_allow_html=True)
-            _show_team_table(def_out["best"], league_f, ["league", "GA"])
-        with c4:
-            st.markdown(f"<div style='color:{COLORS['accent_red']};font-weight:700'>🔓 Pires défenses</div>",
-                        unsafe_allow_html=True)
-            _show_team_table(def_out["worst"], league_f, ["league", "GA"])
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model="claude-3-5-haiku-latest",
+            max_tokens=1500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = resp.content[0].text.strip()
+        # Extraire le JSON (au cas où Claude ajoute du texte autour)
+        m = re.search(r"\[.*\]", raw, re.DOTALL)
+        if not m:
+            return _NEWS_MOCK
+        items = json.loads(m.group(0))
+        # Garde 6 items max et valide les champs
+        valid = []
+        for it in items[:6]:
+            if all(k in it for k in ("source", "club", "title", "sentiment", "tag", "delay")):
+                if it["sentiment"] not in ("pos", "neg", "neu"):
+                    it["sentiment"] = "neu"
+                valid.append(it)
+        return valid if valid else _NEWS_MOCK
+    except Exception:
+        return _NEWS_MOCK
 
-    # Sections supprimées sur demande utilisateur :
-    #   - Jeunes talents
-    #   - Styles atypiques
-    #   - Évolution inter-saisons
+
+def _render_news_card(news: dict) -> None:
+    """Une carte news : source, club, titre, sentiment, badge."""
+    sent_map = {
+        "pos": ("↑ Positif", "var(--good)"),
+        "neg": ("↓ Négatif", "var(--bad)"),
+        "neu": ("· Neutre",  "var(--ink-3)"),
+    }
+    sent_label, sent_color = sent_map.get(news["sentiment"], ("·", "var(--ink-3)"))
+
+    st.markdown(
+        f'<div style="padding:12px 14px;margin-bottom:10px;border-radius:8px;'
+        f'background:var(--bg-2);border:1px solid var(--line-faint);'
+        f'border-left:3px solid {sent_color}">'
+        f'  <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;'
+        f'font-size:10px">'
+        f'    <span style="font-family:ui-monospace,monospace;color:var(--ink-3);'
+        f'letter-spacing:.04em">{news["source"]}</span>'
+        f'    <span class="ef-badge" style="font-size:9px;height:16px;padding:0 5px">'
+        f'{news["club"]}</span>'
+        f'    <span style="margin-left:auto;color:var(--ink-3);font-size:10px">'
+        f'{news["delay"]}</span>'
+        f'  </div>'
+        f'  <div style="font-size:13px;color:var(--ink-0);line-height:1.45;'
+        f'font-weight:500;margin-bottom:6px">{news["title"]}</div>'
+        f'  <div style="display:flex;gap:6px;align-items:center">'
+        f'    <span style="font-size:10px;color:{sent_color};font-weight:600;'
+        f'letter-spacing:.04em">{sent_label}</span>'
+        f'    <span class="ef-badge" style="font-size:9px">{news["tag"]}</span>'
+        f'  </div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_xg_outlier_row(row, sign: str = "+") -> None:
+    """Une ligne joueur dans la liste sur/sous-performeurs."""
+    player = row.get("player", "—")
+    team = row.get("team", "")
+    league = row.get("league", "")
+    gls = row.get("Gls", 0)
+    xg = row.get("xG", 0)
+    diff = row.get("Gls-xG", 0)
+
+    try:
+        gls_str = f"{int(round(float(gls)))}"
+    except Exception:
+        gls_str = "—"
+    try:
+        xg_str = f"{float(xg):.1f}"
+    except Exception:
+        xg_str = "—"
+
+    diff_color = "var(--good)" if sign == "+" else "var(--bad)"
+    diff_sign = "+" if sign == "+" else ""
+    try:
+        diff_str = f"{diff_sign}{float(diff):.1f}"
+    except Exception:
+        diff_str = "—"
+
+    # Initiales pour le placeholder (3 lettres)
+    initials = "".join(w[0].upper() for w in player.split()[:2]) or "·"
+
+    st.markdown(
+        f'<div style="display:grid;grid-template-columns:32px 1fr 50px 50px 60px;'
+        f'gap:14px;align-items:center;padding:10px 8px;'
+        f'border-bottom:1px solid var(--line-faint)">'
+        f'  <div style="width:32px;height:32px;border-radius:6px;'
+        f'background:linear-gradient(135deg, color-mix(in oklch, {diff_color} 30%, var(--bg-2)), var(--bg-2));'
+        f'display:flex;align-items:center;justify-content:center;'
+        f'font-family:ui-monospace,monospace;font-size:10.5px;'
+        f'font-weight:700;color:var(--ink-0)">{initials}</div>'
+        f'  <div style="min-width:0">'
+        f'    <div style="font-size:13px;font-weight:600;color:var(--ink-0);'
+        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{player}</div>'
+        f'    <div style="font-size:10.5px;color:var(--ink-3);margin-top:2px">'
+        f'{team} · {LEAGUE_LABELS.get(league, league)}</div>'
+        f'  </div>'
+        f'  <div style="text-align:right">'
+        f'    <div style="font-family:ui-monospace,monospace;font-size:14px;'
+        f'font-weight:600;color:var(--ink-0)">{gls_str}</div>'
+        f'    <div style="font-size:8.5px;letter-spacing:.1em;color:var(--ink-3);'
+        f'text-transform:uppercase">buts</div>'
+        f'  </div>'
+        f'  <div style="text-align:right">'
+        f'    <div style="font-family:ui-monospace,monospace;font-size:14px;'
+        f'font-weight:600;color:var(--ink-1)">{xg_str}</div>'
+        f'    <div style="font-size:8.5px;letter-spacing:.1em;color:var(--ink-3);'
+        f'text-transform:uppercase">xG</div>'
+        f'  </div>'
+        f'  <div style="text-align:right">'
+        f'    <div style="font-family:ui-monospace,monospace;font-size:15px;'
+        f'font-weight:700;color:{diff_color}">{diff_str}</div>'
+        f'    <div style="font-size:8.5px;letter-spacing:.1em;color:var(--ink-3);'
+        f'text-transform:uppercase">Δ</div>'
+        f'  </div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ── Helpers internes ──────────────────────────────────────────────────────────

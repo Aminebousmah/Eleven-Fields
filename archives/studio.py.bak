@@ -1,0 +1,200 @@
+"""
+Studio — Générateur de threads Twitter/X.
+
+Phase 1 : stub. Affiche les 6 templates planifiés avec leur état.
+Phase 4 : MVP avec templates Scouting + Duel fonctionnels.
+
+Chaque template est un scénario éditorial en N actes :
+  1. Hook + profil dominant      (data : radar percentile + tagline)
+  2. Continuité saisonnière      (data : radar saison N vs N-1)
+  3. Projection ligue cible      (data : ajustements physiques)
+  4. Comparaison rivale          (data : radar comparé)
+  5-6. Contexte large            (data : sélection / marché)
+  7. Verdict                     (data : synthèse + perspective)
+"""
+from __future__ import annotations
+
+from typing import Callable
+
+import streamlit as st
+
+from config import COLORS
+
+
+# ── Définition des templates ──────────────────────────────────────────────────
+
+TEMPLATES = [
+    {
+        "id":          "scouting",
+        "icon":        "📡",
+        "name":        "Scouting",
+        "tagline":     "Présente un joueur méconnu ou émergent.",
+        "n_tweets":    7,
+        "use_case":    "Jeune talent, nouvelle signature, joueur sous-coté.",
+        "example":     "Joaquín Seys (Club Brugge → Premier League)",
+        "status":      "soon",      # Phase 4
+        "phase":       "Phase 4 — MVP",
+    },
+    {
+        "id":          "duel",
+        "icon":        "⚔️",
+        "name":        "Duel",
+        "tagline":     "Compare deux joueurs concurrents au même poste.",
+        "n_tweets":    5,
+        "use_case":    "Rivalité, débat ballon d'or, choix de transfert.",
+        "example":     "Mbappé vs Haaland",
+        "status":      "soon",      # Phase 4
+        "phase":       "Phase 4 — MVP",
+    },
+    {
+        "id":          "surprise",
+        "icon":        "🚀",
+        "name":        "Surprise de la saison",
+        "tagline":     "Met en lumière un joueur qui sur-performe.",
+        "n_tweets":    5,
+        "use_case":    "Top scorer inattendu, jeune qui explose, surprise tactique.",
+        "example":     "Cole Palmer en 2023-24",
+        "status":      "planned",
+        "phase":       "Phase 5",
+    },
+    {
+        "id":          "crisis",
+        "icon":        "📉",
+        "name":        "Crise de forme",
+        "tagline":     "Analyse la baisse de performance d'une star.",
+        "n_tweets":    5,
+        "use_case":    "Star en perte, équipe en crise, manager sous pression.",
+        "example":     "Vinicius Jr. en chute libre",
+        "status":      "planned",
+        "phase":       "Phase 5",
+    },
+    {
+        "id":          "heir",
+        "icon":        "🧬",
+        "name":        "L'héritier",
+        "tagline":     "Compare un jeune talent à un vétéran du même profil.",
+        "n_tweets":    6,
+        "use_case":    "Comparaison générationnelle, successeur potentiel.",
+        "example":     "Yamal vs Messi U21",
+        "status":      "planned",
+        "phase":       "Phase 5",
+    },
+    {
+        "id":          "bestxi",
+        "icon":        "🏆",
+        "name":        "Best XI",
+        "tagline":     "Composition idéale selon un critère.",
+        "n_tweets":    4,
+        "use_case":    "XI U23, XI sous-payé, XI buteurs Big 5.",
+        "example":     "XI U21 Big 5 — saison 2024-25",
+        "status":      "planned",
+        "phase":       "Phase 5",
+    },
+]
+
+
+# ── Render ────────────────────────────────────────────────────────────────────
+
+def _hero() -> None:
+    st.markdown(
+        f"""
+<div style="text-align:center;padding:20px 0 12px 0">
+  <div style="font-size:2.2rem;font-weight:900;
+              background:linear-gradient(90deg,{COLORS['accent_gold']},{COLORS['accent_red']});
+              -webkit-background-clip:text;-webkit-text-fill-color:transparent">
+    🎬 Studio
+  </div>
+  <div style="color:{COLORS['text_muted']};font-size:0.95rem;margin-top:6px;
+              max-width:680px;margin-left:auto;margin-right:auto">
+    Compose un thread Twitter/X à partir d'un template scénarisé.
+    Choisis un format, renseigne ton joueur, l'app pré-remplit chaque tweet
+    avec data et texte généré.
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _status_badge(status: str) -> str:
+    if status == "soon":
+        return (
+            f"<span style='background:{COLORS['accent_gold']}20;"
+            f"color:{COLORS['accent_gold']};padding:2px 8px;border-radius:10px;"
+            f"font-size:0.7rem;font-weight:700'>BIENTÔT</span>"
+        )
+    if status == "ready":
+        return (
+            f"<span style='background:{COLORS['accent_green']}20;"
+            f"color:{COLORS['accent_green']};padding:2px 8px;border-radius:10px;"
+            f"font-size:0.7rem;font-weight:700'>DISPONIBLE</span>"
+        )
+    return (
+        f"<span style='background:{COLORS['border']};color:{COLORS['text_muted']};"
+        f"padding:2px 8px;border-radius:10px;font-size:0.7rem;font-weight:700'>"
+        f"PLANIFIÉ</span>"
+    )
+
+
+def _template_card(t: dict, goto: Callable) -> None:
+    """Carte template avec status badge et bouton d'ouverture."""
+    with st.container(border=True):
+        st.markdown(
+            f"<div style='display:flex;justify-content:space-between;"
+            f"align-items:flex-start;margin-bottom:6px'>"
+            f"<div style='font-size:1.8rem'>{t['icon']}</div>"
+            f"<div>{_status_badge(t['status'])}</div>"
+            f"</div>"
+            f"<div style='font-size:1.05rem;font-weight:700;color:{COLORS['text']}'>"
+            f"{t['name']}</div>"
+            f"<div style='font-size:0.85rem;color:{COLORS['text_muted']};"
+            f"margin-top:4px;min-height:40px'>{t['tagline']}</div>"
+            f"<div style='margin-top:10px;padding-top:8px;"
+            f"border-top:1px solid {COLORS['border']};"
+            f"font-size:0.74rem;color:{COLORS['text_muted']}'>"
+            f"📝 {t['n_tweets']} tweets · {t['phase']}"
+            f"</div>"
+            f"<div style='font-size:0.74rem;color:{COLORS['text_muted']};"
+            f"margin-top:4px'>💡 Ex : <i>{t['example']}</i></div>",
+            unsafe_allow_html=True,
+        )
+
+        disabled = t["status"] != "ready"
+        label = "🚀  Ouvrir" if not disabled else "🔒  Bientôt disponible"
+        if st.button(label, key=f"tpl_{t['id']}",
+                     disabled=disabled, use_container_width=True):
+            goto("studio", t["id"])
+
+
+def render(season: str, league: str, goto: Callable) -> None:
+    _hero()
+
+    # Grille de templates 3×2
+    rows = [TEMPLATES[i:i+3] for i in range(0, len(TEMPLATES), 3)]
+    for row in rows:
+        cols = st.columns(3)
+        for col, t in zip(cols, row):
+            with col:
+                _template_card(t, goto)
+
+    # Bloc "à venir"
+    st.divider()
+    st.markdown(
+        f"""
+<div style='background:{COLORS['card']};border-radius:10px;padding:14px 18px;
+            border:1px solid {COLORS['border']}'>
+  <div style='font-weight:700;color:{COLORS['text']};margin-bottom:6px'>
+    🚧 Studio en construction
+  </div>
+  <div style='color:{COLORS['text_muted']};font-size:0.85rem;line-height:1.55'>
+    Le Studio sera livré en deux temps. <b style='color:{COLORS['text']}'>Phase 4</b>
+    déverrouillera les templates <b style='color:{COLORS['accent_green']}'>Scouting</b>
+    et <b style='color:{COLORS['accent_green']}'>Duel</b> — composition guidée tweet
+    par tweet, génération de texte via Claude Haiku, export PNG par tweet, posting
+    automatique sur X.
+    <b style='color:{COLORS['text']}'>Phase 5</b> ajoutera les 4 autres templates.
+  </div>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )

@@ -23,7 +23,7 @@ from components.charts import (
 from components.filters import select_team, select_two_teams
 from components.glossary import render_metric_glossary, render_disclaimer
 from components.kpi_cards import render_kpi_row, render_section_header
-from data.loader import load_team_season_stats
+from data.loader import load_team_season_stats, load_player_season_stats
 from data.processor import (
     build_radar_with_context, build_percentiles_labeled,
     build_performance_index, build_cluster_data, find_similar_teams,
@@ -79,27 +79,65 @@ def _team_kpis(season: str, league: str | None, team: str, _season_key: str = ""
 
 
 def _team_header(team: str, league_label: str, season: str, league_filter: str | None = None) -> None:
+    """Header club design Claude : logo 110px + nom + ligue/saison + KPIs tiles."""
+    from components.design import stat_tile, stat_grid
+
     logo_url = get_club_logo(team, league_filter)
-    if logo_url:
-        c1, c2 = st.columns([1, 9])
-        with c1:
-            st.image(logo_url, width=70)
-        with c2:
+
+    # Récup KPIs équipe pour les tiles
+    std = load_team_season_stats("standard", [season])
+    if league_filter:
+        std = std[std["league"] == league_filter]
+    row = std[std["team"] == team]
+
+    def _fmt(v, d=0):
+        try:
+            return f"{float(v):.{d}f}"
+        except Exception:
+            return "—"
+
+    if row.empty:
+        kpis = []
+    else:
+        r = row.iloc[0]
+        kpis = [
+            stat_tile("BUTS",    _fmt(r.get("Gls"), 0)),
+            stat_tile("MATCHS",  _fmt(r.get("MP"), 0)),
+            stat_tile("xG",      _fmt(r.get("xG"), 1)),
+            stat_tile("POSS",    _fmt(r.get("Poss"), 0) + "%"),
+        ]
+
+    cols = st.columns([1.3, 4.5, 3.5], gap="medium")
+    with cols[0]:
+        if logo_url:
+            st.image(logo_url, width=130)
+        else:
             st.markdown(
-                f"<div style='padding:6px 0'>"
-                f"<span style='font-size:1.45rem;font-weight:800;color:{COLORS['text']}'>{team}</span>"
-                f"<div style='font-size:0.85rem;color:{COLORS['text_muted']}'>"
-                f"{league_label} · {season}</div></div>",
+                '<div style="width:130px;height:130px;border-radius:14px;'
+                'background:var(--bg-2);border:1px solid var(--line);'
+                'display:flex;align-items:center;justify-content:center;'
+                'font-size:54px;color:var(--ink-3)">🏟️</div>',
                 unsafe_allow_html=True,
             )
-    else:
+    with cols[1]:
         st.markdown(
-            f"<div style='padding:6px 0'>"
-            f"<span style='font-size:1.45rem;font-weight:800;color:{COLORS['text']}'>🏟️ {team}</span>"
-            f"<span style='font-size:0.85rem;color:{COLORS['text_muted']};margin-left:10px'>"
-            f"{league_label} · {season}</span></div>",
+            f'<div style="padding-top:6px">'
+            f'  <div style="font-size:28px;font-weight:700;color:var(--ink-0);'
+            f'line-height:1.1;letter-spacing:-0.02em">{team}</div>'
+            f'  <div style="display:flex;align-items:center;gap:8px;margin-top:8px;'
+            f'font-size:12.5px;color:var(--ink-2)">'
+            f'    <span style="font-weight:600;color:var(--ink-1)">{league_label}</span>'
+            f'    <span style="color:var(--ink-4)">·</span>'
+            f'    <span>Saison {season}</span>'
+            f'  </div>'
+            f'  <div style="font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;'
+            f'color:var(--ink-3);margin-top:10px">Effectif Big 5 · enrichi Transfermarkt</div>'
+            f'</div>',
             unsafe_allow_html=True,
         )
+    with cols[2]:
+        if kpis:
+            st.markdown(stat_grid(kpis, cols=2, gap="6px"), unsafe_allow_html=True)
 
 
 
@@ -149,6 +187,8 @@ def _render_focus(season: str, league: str, league_filter: str | None, league_la
         return
 
     _team_header(team, league_label, season, league_filter)
+    _render_team_indices_row(team, season, league_filter)
+    _render_team_top_players(team, season, league_filter)
     render_kpi_row(_team_kpis(season, league_filter, team, _season_key=season))
 
     st.divider()
@@ -577,3 +617,136 @@ def _render_clustering(season: str, league_filter: str | None, highlight: list[s
         for c in range(n_clusters):
             teams_in = plot_df[plot_df["cluster"] == c]["team"].tolist()
             st.markdown(f"**{names[c]}** : {', '.join(sorted(teams_in))}")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# REFONTE v2 — Indices composites + Top scorers/clean sheets (Phase B)
+# ════════════════════════════════════════════════════════════════════════════
+
+def _render_team_indices_row(team: str, season: str, league_filter: str | None) -> None:
+    """
+    6 gauges d'indices composites (Créativité, Danger, Progression, Pressing,
+    Récupération, Possession) en grille 3 colonnes.
+    """
+    from components.design import card_open, card_close, gauge_svg
+    from scipy.stats import percentileofscore
+
+    # Calcul des scores composites de l'équipe
+    scores = {}
+    cache = {}
+    for index_name, metrics in PERFORMANCE_INDICES.items():
+        pct_values = []
+        for stat_type, col in metrics:
+            if stat_type not in cache:
+                df = load_team_season_stats(stat_type, [season])
+                if league_filter:
+                    df = df[df["league"] == league_filter]
+                cache[stat_type] = df
+            df = cache[stat_type]
+            if col not in df.columns:
+                continue
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+            clean = df[col].dropna()
+            if clean.empty:
+                continue
+            row = df[df["team"] == team]
+            if row.empty or pd.isna(row[col].values[0]):
+                continue
+            val = float(row[col].values[0])
+            pct = float(percentileofscore(clean, val, kind="rank"))
+            pct_values.append(pct)
+        if pct_values:
+            scores[index_name] = sum(pct_values) / len(pct_values)
+
+    if not scores:
+        return
+
+    st.markdown('<div style="height:14px"></div>', unsafe_allow_html=True)
+    st.markdown(card_open("Indices composites · vs ligue"), unsafe_allow_html=True)
+
+    # Grille 3 colonnes de gauges
+    items = list(scores.items())
+    rows = [items[i:i+3] for i in range(0, len(items), 3)]
+    for row in rows:
+        cols = st.columns(3, gap="medium")
+        for col_obj, (name, score) in zip(cols, row):
+            with col_obj:
+                st.markdown(
+                    f'<div style="display:flex;flex-direction:column;align-items:center;'
+                    f'padding:8px 0">'
+                    f'{gauge_svg(score, 100, label=name, size=110)}</div>',
+                    unsafe_allow_html=True,
+                )
+
+    st.markdown(card_close(), unsafe_allow_html=True)
+
+
+def _render_team_top_players(team: str, season: str, league_filter: str | None) -> None:
+    """Top buteurs + top passeurs du club."""
+    from components.design import card_open, card_close
+
+    df = load_player_season_stats("standard", [season])
+    if league_filter:
+        df = df[df["league"] == league_filter]
+    df = df[df["team"] == team]
+    if df.empty:
+        return
+
+    df["Gls"] = pd.to_numeric(df["Gls"], errors="coerce")
+    df["Ast"] = pd.to_numeric(df["Ast"], errors="coerce")
+    df["Min"] = pd.to_numeric(df["Min"], errors="coerce")
+
+    top_scorers = df.nlargest(5, "Gls")[["player", "Gls", "Ast", "Min"]]
+    top_passers = df.nlargest(5, "Ast")[["player", "Ast", "Gls", "Min"]]
+
+    cols = st.columns(2, gap="medium")
+
+    with cols[0]:
+        st.markdown(card_open("Top buteurs",
+                              actions_html='<span style="color:var(--ink-3);font-size:10px">5 joueurs</span>'),
+                    unsafe_allow_html=True)
+        for _, r in top_scorers.iterrows():
+            _render_player_compact_row(r["player"], "Buts",
+                                        int(r["Gls"]) if pd.notna(r["Gls"]) else 0,
+                                        "var(--good)",
+                                        f"{int(r['Min']) if pd.notna(r['Min']) else 0} min")
+        st.markdown(card_close(), unsafe_allow_html=True)
+
+    with cols[1]:
+        st.markdown(card_open("Top passeurs",
+                              actions_html='<span style="color:var(--ink-3);font-size:10px">5 joueurs</span>'),
+                    unsafe_allow_html=True)
+        for _, r in top_passers.iterrows():
+            _render_player_compact_row(r["player"], "Pass. D",
+                                        int(r["Ast"]) if pd.notna(r["Ast"]) else 0,
+                                        "var(--accent)",
+                                        f"{int(r['Min']) if pd.notna(r['Min']) else 0} min")
+        st.markdown(card_close(), unsafe_allow_html=True)
+
+
+def _render_player_compact_row(name: str, label: str, value: int,
+                                color: str, sub: str) -> None:
+    """Une ligne joueur compacte avec stat + sub-texte."""
+    initials = "".join(w[0].upper() for w in name.split()[:2]) or "·"
+    st.markdown(
+        f'<div style="display:grid;grid-template-columns:28px 1fr 50px;'
+        f'gap:10px;align-items:center;padding:8px 4px;'
+        f'border-bottom:1px solid var(--line-faint)">'
+        f'  <div style="width:28px;height:28px;border-radius:5px;'
+        f'background:var(--bg-2);display:flex;align-items:center;justify-content:center;'
+        f'font-family:ui-monospace,monospace;font-size:10px;'
+        f'font-weight:700;color:var(--ink-1)">{initials}</div>'
+        f'  <div style="min-width:0">'
+        f'    <div style="font-size:12px;font-weight:500;color:var(--ink-0);'
+        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{name}</div>'
+        f'    <div style="font-size:10px;color:var(--ink-3)">{sub}</div>'
+        f'  </div>'
+        f'  <div style="text-align:right">'
+        f'    <div style="font-family:ui-monospace,monospace;font-size:15px;'
+        f'font-weight:700;color:{color}">{value}</div>'
+        f'    <div style="font-size:9px;letter-spacing:.06em;color:var(--ink-3);'
+        f'text-transform:uppercase">{label}</div>'
+        f'  </div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )

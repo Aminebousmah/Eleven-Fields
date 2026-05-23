@@ -361,6 +361,42 @@ def find_xg_outliers(season: str, league: str | None = None, top_n: int = 5) -> 
     }
 
 
+def find_player_xg_outliers(
+    season: str,
+    league: str | None = None,
+    top_n: int = 5,
+    min_minutes: int = 900,
+) -> dict:
+    """
+    Identifie les joueurs qui sur/sous-performent par rapport à leur xG.
+    Retourne {'over': DataFrame, 'under': DataFrame} avec colonnes :
+      player, team, league, Gls, xG, Gls-xG.
+    """
+    std = load_player_season_stats("standard", [season])
+    sht = load_player_season_stats("shooting", [season])
+    if league and league != "Toutes les ligues":
+        std = std[std["league"] == league]
+        sht = sht[sht["league"] == league]
+
+    if std.empty or sht.empty:
+        return {"over": pd.DataFrame(), "under": pd.DataFrame()}
+
+    base = std[["player", "team", "league", "Gls", "Min"]].copy()
+    base["Min"] = pd.to_numeric(base["Min"], errors="coerce")
+    base = base[base["Min"].fillna(0) >= min_minutes]
+
+    sht_sub = sht[["player", "team", "xG"]].copy()
+    merged = base.merge(sht_sub, on=["player", "team"], how="inner")
+    merged["Gls"] = pd.to_numeric(merged["Gls"], errors="coerce")
+    merged["xG"] = pd.to_numeric(merged["xG"], errors="coerce")
+    merged["Gls-xG"] = (merged["Gls"] - merged["xG"]).round(2)
+    merged = merged.dropna(subset=["Gls-xG"])
+
+    over = merged.sort_values("Gls-xG", ascending=False).head(top_n).reset_index(drop=True)
+    under = merged.sort_values("Gls-xG", ascending=True).head(top_n).reset_index(drop=True)
+    return {"over": over, "under": under}
+
+
 def find_defensive_outliers(season: str, league: str | None = None, top_n: int = 5) -> dict:
     """Identifie les meilleures/pires défenses vs leur xGA attendu."""
     kpr = load_team_season_stats("keeper", [season])

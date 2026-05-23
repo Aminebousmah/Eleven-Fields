@@ -15,6 +15,9 @@ from components.glossary import (
     render_metric_glossary, render_disclaimer,
 )
 from components.kpi_cards import render_section_header, render_kpi_row
+from components.design import (
+    card_open, card_close, pct_color_css, pos_class, badge,
+)
 from data.loader import (
     load_team_season_stats, load_player_season_stats, load_all_team_season_stats,
 )
@@ -357,65 +360,73 @@ def render_clubs(season: str, league: str) -> None:
 # ── Render — Comparaison Joueurs (page dédiée) ────────────────────────────────
 
 def render_players(season: str, league: str) -> None:
-    """Comparaison de 2 joueurs (radar percentile + tableau épuré)."""
+    """Comparaison de 2 joueurs : filter rail horizontal + duel."""
     league_filter = None if league == "Toutes les ligues" else league
 
     if True:
         from config import COMPARISON_PRESETS
-        from components.filters import render_show_gate
-
-        render_section_header(
-            "Comparaison radar — 2 joueurs",
-            "Choisis un type de comparaison puis sélectionne les 2 joueurs.",
+        from components.filters import (
+            render_show_gate, select_two_players_compact,
         )
 
-        # ── Sélection du type de comparaison ─────────────────────────────────
-        comp_options = ["Auto (par poste)"] + list(COMPARISON_PRESETS.keys())
-        comp_type = st.selectbox(
-            "Type de comparaison",
-            options=comp_options,
-            key="cmp_type",
-            help=(
-                "Auto = métriques choisies selon le poste du joueur 1. "
-                "Sinon, set de métriques pré-câblé thématique."
-            ),
+        comp_options = ["Auto"] + list(COMPARISON_PRESETS.keys())
+
+        # ── Filter rail horizontal compact (style design) ────────────────────
+        # 3 zones : Joueur A | Joueur B | Type de comparaison
+        st.markdown(
+            '<div style="display:flex;align-items:center;gap:6px;'
+            'padding:10px 12px;margin-bottom:10px;border-radius:10px;'
+            'background:var(--bg-1);border:1px solid var(--line-faint)">'
+            '<span style="font-size:9.5px;letter-spacing:.14em;'
+            'text-transform:uppercase;color:var(--ink-3);margin-right:8px">'
+            'Joueurs à comparer</span></div>',
+            unsafe_allow_html=True,
         )
 
-        pdf = load_player_season_stats("standard", [season])
-        if league_filter:
-            pdf = pdf[pdf["league"] == league_filter]
+        (p1, t1), (p2, t2) = select_two_players_compact(season, league)
 
-        (p1, t1), (p2, t2) = select_two_players(season, league)
         if not (p1 and p2):
             st.info("Sélectionnez deux joueurs.")
             render_disclaimer()
             return
 
-        # Gate "Afficher" — après sélection des joueurs
+        # Sélecteur Type — sur sa propre ligne, plus visible
+        comp_type = st.selectbox(
+            "Type de comparaison",
+            options=comp_options,
+            key="cmp_type",
+            help="Auto = métriques selon le poste du joueur 1. Sinon, set pré-câblé.",
+        )
+
+        # Gate avec empty state animée
         if not render_show_gate(
             "compare_players",
             label="⚔️  Lancer la comparaison",
-            hint="Tu as choisi tes 2 joueurs et le type de comparaison. Clique pour générer.",
+            primary_text="Configure ton duel",
+            hint=(f"{p1} vs {p2} · type : {comp_type}. "
+                  f"Le duel produit un radar overlay et un tableau coloré "
+                  f"(vert = meilleur, rouge = pire)."),
+            icon="⚔",
         ):
             render_disclaimer()
             return
 
-        if True:
-            # Cartes joueurs enrichies
-            cardA, cardB = st.columns(2)
-            with cardA:
-                _player_card(p1, t1, league_filter, season=season,
-                             accent=COLORS["accent_green"])
-            with cardB:
-                _player_card(p2, t2, league_filter, season=season,
-                             accent=COLORS["accent_blue"])
+        # Re-map "Auto" → "Auto (par poste)" pour compat avec le code existant
+        if comp_type == "Auto":
+            comp_type = "Auto (par poste)"
 
+        # Charger pdf seulement maintenant qu'on va générer
+        pdf = load_player_season_stats("standard", [season])
+        if league_filter:
+            pdf = pdf[pdf["league"] == league_filter]
+
+        if True:
+            # ── Calcul positions + métriques ─────────────────────────────────
             row1 = pdf[(pdf["player"] == p1) & (pdf["team"] == t1)]
             pos1 = _pos_group(row1["pos"].values[0] if not row1.empty else "MF")
             row2 = pdf[(pdf["player"] == p2) & (pdf["team"] == t2)]
             pos2 = _pos_group(row2["pos"].values[0] if not row2.empty else "MF")
 
-            # ── Détermine les métriques selon le type de comparaison ────────
             if comp_type == "Auto (par poste)":
                 if pos1 != pos2:
                     st.warning(
@@ -423,79 +434,73 @@ def render_players(season: str, league: str) -> None:
                         f"La comparaison utilise les métriques du poste de **{p1}**."
                     )
                 metrics_raw = PLAYER_METRICS_BY_POS.get(pos1, PLAYER_METRICS_BY_POS["MF"])
-                # Format (stat_type, col) sans label FR
                 metric_labels_fr = None
             else:
                 preset = COMPARISON_PRESETS[comp_type]
-                # Format (label_fr, stat_type, col)
                 metrics_raw = [(stat_type, col) for _, stat_type, col in preset]
                 metric_labels_fr = {col: label for label, _, col in preset}
 
-            ref_pos = pos1  # pool de référence percentile
+            ref_pos = pos1
             l1, p_pct1, r1 = _player_percentiles(p1, t1, metrics_raw, season, league_filter, ref_pos)
             l2, p_pct2, r2 = _player_percentiles(p2, t2, metrics_raw, season, league_filter, ref_pos)
 
             common = [l for l in l1 if l in l2]
             if not common:
                 st.warning("Pas de métriques communes pour ces joueurs.")
-            else:
-                # Si on a un preset FR, on utilise les labels FR sur le radar
-                display_labels = (
-                    [metric_labels_fr.get(c, c) for c in common]
-                    if metric_labels_fr else common
-                )
+                return
 
-                idx1 = {l: i for i, l in enumerate(l1)}
-                idx2 = {l: i for i, l in enumerate(l2)}
+            display_labels = (
+                [metric_labels_fr.get(c, c) for c in common]
+                if metric_labels_fr else common
+            )
+            idx1 = {l: i for i, l in enumerate(l1)}
+            idx2 = {l: i for i, l in enumerate(l2)}
+
+            # Calcul des victoires (qui a le meilleur percentile sur chaque métrique)
+            wins_a = sum(1 for l in common if p_pct1[idx1[l]] > p_pct2[idx2[l]])
+            wins_b = sum(1 for l in common if p_pct2[idx2[l]] > p_pct1[idx1[l]])
+
+            # ── Versus row : 2 cartes miroir + score central ─────────────────
+            _render_versus_row(p1, t1, p2, t2, league_filter, season,
+                                comp_type, wins_a, wins_b, len(common))
+
+            # ── Layout 2 cols : Radar overlay | Lecture rapide ───────────────
+            cols_main = st.columns([3, 2], gap="medium")
+            with cols_main[0]:
+                st.markdown(card_open("Radar overlay · percentiles",
+                            actions_html=(
+                                f'<span style="color:var(--good);font-size:11px;'
+                                f'margin-right:8px">● {p1}</span>'
+                                f'<span style="color:var(--bad);font-size:11px">● {p2}</span>'
+                            )),
+                            unsafe_allow_html=True)
                 fig = make_radar(
                     {
                         p1: [p_pct1[idx1[l]] / 100 for l in common],
                         p2: [p_pct2[idx2[l]] / 100 for l in common],
                     },
                     display_labels,
-                    title=(
-                        f"Comparaison percentile — {comp_type}"
-                        if comp_type != "Auto (par poste)"
-                        else f"Comparaison percentile — joueurs {ref_pos} (≥ 500 min)"
-                    ),
+                    title="",
                 )
+                fig.update_layout(height=460, showlegend=False)
                 st.plotly_chart(fig, use_container_width=True)
+                st.markdown(card_close(), unsafe_allow_html=True)
 
-                # ── Tableau épuré : 3 colonnes seulement, vert = meilleur, rouge = pire
-                comp_df = pd.DataFrame({
-                    "Métrique": display_labels,
-                    p1: [int(round(p_pct1[idx1[l]])) for l in common],
-                    p2: [int(round(p_pct2[idx2[l]])) for l in common],
-                })
-
-                def _color_better(row):
-                    """Vert/rouge contrastés (fond sombre, texte clair)."""
-                    v1, v2 = row[p1], row[p2]
-                    GREEN_BG = "background-color:#0f6b3f;color:#ffffff;font-weight:700"
-                    RED_BG   = "background-color:#7a1f29;color:#ffffff;font-weight:700"
-                    if v1 > v2:
-                        return ["", GREEN_BG, RED_BG]
-                    if v2 > v1:
-                        return ["", RED_BG, GREEN_BG]
-                    return ["", "", ""]
-
-                styled = (
-                    comp_df.style
-                    .apply(_color_better, axis=1)
-                    .format({p1: "{:d}", p2: "{:d}"})
-                )
-                st.dataframe(
-                    styled, use_container_width=True, hide_index=True,
-                    height=min(38 * len(comp_df) + 80, 600),
-                    column_config={
-                        "Métrique": st.column_config.TextColumn(width="medium"),
-                        p1: st.column_config.NumberColumn(width="small"),
-                        p2: st.column_config.NumberColumn(width="small"),
-                    },
+            with cols_main[1]:
+                _render_quick_read(
+                    p1, p2, common, display_labels,
+                    p_pct1, p_pct2, idx1, idx2, r1, r2,
                 )
 
-                # Glossaire uniquement si métriques FBref (pas FR)
-                if metric_labels_fr is None:
+            # ── Tableau pleine largeur : 5 colonnes avec barre de répartition
+            _render_compare_table_html(
+                p1, p2, common, display_labels,
+                p_pct1, p_pct2, idx1, idx2, r1, r2,
+            )
+
+            # Glossaire uniquement si métriques FBref (pas FR)
+            if metric_labels_fr is None:
+                with st.expander("ℹ  Définition des indicateurs", expanded=False):
                     render_metric_glossary(metrics=common)
 
     render_disclaimer()
@@ -516,3 +521,371 @@ def render(season: str, league: str) -> None:
 # ── Watchlist ────────────────────────────────────────────────────────────────
 
 # Fonctionnalité watchlist supprimée sur demande utilisateur.
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# REFONTE v2 — Versus Row + Lecture rapide auto (Phase 2.3)
+# ════════════════════════════════════════════════════════════════════════════
+
+def _render_versus_row(
+    p1: str, t1: str, p2: str, t2: str,
+    league_filter: str | None, season: str,
+    comp_type: str, wins_a: int, wins_b: int, n_metrics: int,
+) -> None:
+    """
+    Versus row : 2 cartes joueur miroir (A vert / B rouge) + bandeau central
+    avec score wins:losses, nombre de métriques, badge type de comparaison.
+    Style mockup 2 du design Claude.
+    """
+    # Récupération info TM pour les 2 joueurs
+    tm1 = match_player(p1, fbref_league=league_filter)
+    tm2 = match_player(p2, fbref_league=league_filter)
+
+    photo1 = tm1.get("image_url") if tm1 else None
+    photo2 = tm2.get("image_url") if tm2 else None
+
+    mv1 = tm1.get("market_value_in_eur") if tm1 else None
+    mv2 = tm2.get("market_value_in_eur") if tm2 else None
+    mv1_str = format_value(mv1) if mv1 and pd.notna(mv1) else "—"
+    mv2_str = format_value(mv2) if mv2 and pd.notna(mv2) else "—"
+
+    # Récupération âge depuis player stats standard
+    pdf = load_player_season_stats("standard", [season])
+    if league_filter:
+        pdf = pdf[pdf["league"] == league_filter]
+    age1 = ""
+    age2 = ""
+    try:
+        r1 = pdf[(pdf["player"] == p1) & (pdf["team"] == t1)]
+        if not r1.empty:
+            age1 = f"{int(float(r1.iloc[0].get('age', 0)))} ans" if pd.notna(r1.iloc[0].get("age")) else ""
+        r2 = pdf[(pdf["player"] == p2) & (pdf["team"] == t2)]
+        if not r2.empty:
+            age2 = f"{int(float(r2.iloc[0].get('age', 0)))} ans" if pd.notna(r2.iloc[0].get("age")) else ""
+    except Exception:
+        pass
+
+    # 3 colonnes : card A (5) | score central (2) | card B (5)
+    cA, cMid, cB = st.columns([5, 2, 5], gap="small")
+
+    # ── Card A (vert) ───────────────────────────────────────────────────────
+    with cA:
+        photo_html_a = (
+            f'<img src="{photo1}" style="width:60px;height:60px;border-radius:50%;'
+            f'object-fit:cover;flex:none"/>'
+            if photo1
+            else '<div style="width:60px;height:60px;border-radius:50%;'
+                 'background:var(--bg-3);display:flex;align-items:center;'
+                 'justify-content:center;font-size:24px;flex:none">👤</div>'
+        )
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:12px;'
+            f'padding:14px 16px;border-radius:12px;min-height:90px;'
+            f'background:linear-gradient(90deg, color-mix(in oklch, var(--good) 18%, var(--bg-1)) 0%, var(--bg-1) 100%);'
+            f'border:1px solid color-mix(in oklch, var(--good) 30%, var(--line-faint))">'
+            f'  <div style="font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;'
+            f'color:var(--good);writing-mode:vertical-rl;transform:rotate(180deg);'
+            f'font-weight:700">Joueur A</div>'
+            f'  {photo_html_a}'
+            f'  <div style="min-width:0;flex:1">'
+            f'    <div style="font-size:17px;font-weight:700;color:var(--ink-0);'
+            f'letter-spacing:-.01em">{p1}</div>'
+            f'    <div style="font-size:11.5px;color:var(--ink-2);margin-top:3px">'
+            f'{t1}{(" · " + age1) if age1 else ""}{(" · " + mv1_str) if mv1_str != "—" else ""}</div>'
+            f'  </div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Score central ───────────────────────────────────────────────────────
+    with cMid:
+        st.markdown(
+            f'<div style="display:flex;flex-direction:column;align-items:center;'
+            f'justify-content:center;min-height:90px;padding:12px 6px;'
+            f'background:var(--bg-0);border-radius:10px;'
+            f'border:1px solid var(--line-faint)">'
+            f'  <div style="font-size:9.5px;letter-spacing:.18em;'
+            f'color:var(--ink-3);text-transform:uppercase;font-weight:600">vs</div>'
+            f'  <div style="display:flex;align-items:center;gap:6px;'
+            f'margin-top:4px;font-family:ui-monospace,monospace;font-size:24px;'
+            f'font-weight:700">'
+            f'    <span style="color:var(--good)">{wins_a}</span>'
+            f'    <span style="color:var(--ink-4)">:</span>'
+            f'    <span style="color:var(--bad)">{wins_b}</span>'
+            f'  </div>'
+            f'  <div style="font-size:9.5px;color:var(--ink-3);margin-top:2px">'
+            f'{n_metrics} métriques</div>'
+            f'  <div style="margin-top:6px">'
+            f'    <span class="ef-badge solid" style="font-family:ui-monospace,monospace;'
+            f'font-size:9px">{comp_type if comp_type != "Auto (par poste)" else "AUTO"}</span>'
+            f'  </div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Card B (rouge) ──────────────────────────────────────────────────────
+    with cB:
+        photo_html_b = (
+            f'<img src="{photo2}" style="width:60px;height:60px;border-radius:50%;'
+            f'object-fit:cover;flex:none"/>'
+            if photo2
+            else '<div style="width:60px;height:60px;border-radius:50%;'
+                 'background:var(--bg-3);display:flex;align-items:center;'
+                 'justify-content:center;font-size:24px;flex:none">👤</div>'
+        )
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:12px;'
+            f'padding:14px 16px;border-radius:12px;min-height:90px;'
+            f'background:linear-gradient(270deg, color-mix(in oklch, var(--bad) 18%, var(--bg-1)) 0%, var(--bg-1) 100%);'
+            f'border:1px solid color-mix(in oklch, var(--bad) 30%, var(--line-faint));'
+            f'text-align:right">'
+            f'  <div style="min-width:0;flex:1">'
+            f'    <div style="font-size:17px;font-weight:700;color:var(--ink-0);'
+            f'letter-spacing:-.01em">{p2}</div>'
+            f'    <div style="font-size:11.5px;color:var(--ink-2);margin-top:3px">'
+            f'{t2}{(" · " + age2) if age2 else ""}{(" · " + mv2_str) if mv2_str != "—" else ""}</div>'
+            f'  </div>'
+            f'  {photo_html_b}'
+            f'  <div style="font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;'
+            f'color:var(--bad);writing-mode:vertical-rl;font-weight:700">Joueur B</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown('<div style="height:14px"></div>', unsafe_allow_html=True)
+
+
+# ─── Lecture rapide auto-générée (4 insights) ────────────────────────────────
+
+def _render_quick_read(
+    p1: str, p2: str,
+    common: list[str], display_labels: list[str],
+    p_pct1: list[float], p_pct2: list[float],
+    idx1: dict[str, int], idx2: dict[str, int],
+    r1: list[float], r2: list[float],
+) -> None:
+    """
+    Carte "Lecture rapide" : 4 insights auto extraits des écarts de percentile.
+    Chaque insight = (icône, label, texte avec stats en gras, camp gagnant).
+    """
+    # Calcule l'écart de percentile pour chaque métrique
+    diffs = []
+    for c, lbl in zip(common, display_labels):
+        pa = p_pct1[idx1[c]]
+        pb = p_pct2[idx2[c]]
+        va = r1[idx1[c]]
+        vb = r2[idx2[c]]
+        diffs.append({
+            "label": lbl, "col": c,
+            "pa": pa, "pb": pb,
+            "va": va, "vb": vb,
+            "abs_diff": abs(pa - pb),
+            "winner": p1 if pa > pb else p2,
+            "winner_color": "var(--good)" if pa > pb else "var(--bad)",
+        })
+
+    # Trier par écart absolu décroissant
+    diffs_sorted = sorted(diffs, key=lambda d: d["abs_diff"], reverse=True)
+    top_insights = diffs_sorted[:4]
+
+    insights_html = ""
+    for d in top_insights:
+        # Icône selon le type de métrique
+        col_lc = (d["col"] or "").lower()
+        if any(k in col_lc for k in ("gls", "g/sh", "sot")):
+            icon = "⚽"
+            verb = "MEILLEUR FINISSEUR"
+        elif any(k in col_lc for k in ("ast", "xag", "kp", "sca", "gca", "ppa", "crspa")):
+            icon = "🎯"
+            verb = "MEILLEUR CRÉATEUR"
+        elif any(k in col_lc for k in ("prgc", "prgr", "succ", "touch")):
+            icon = "⚡"
+            verb = "DOMINE EN CONDUITE"
+        elif any(k in col_lc for k in ("won", "tkl", "int", "blocks", "clr", "recov")):
+            icon = "🛡"
+            verb = "DOMINE DÉFENSIVEMENT"
+        else:
+            icon = "📊"
+            verb = "DOMINE SUR"
+
+        winner = d["winner"]
+        loser = p2 if winner == p1 else p1
+        v_win = d["va"] if winner == p1 else d["vb"]
+        v_lose = d["vb"] if winner == p1 else d["va"]
+        delta = abs(v_win - v_lose)
+        win_color = d["winner_color"]
+
+        # Format valeurs : entier si proche d'entier, sinon 2 décimales
+        def _fmt(v):
+            try:
+                vf = float(v)
+                if abs(vf - round(vf)) < 0.05 and abs(vf) >= 10:
+                    return f"{int(round(vf))}"
+                return f"{vf:.2f}"
+            except Exception:
+                return "—"
+
+        insights_html += (
+            f'<div style="display:flex;gap:10px;padding:10px 12px;'
+            f'border-left:3px solid {win_color};margin-bottom:8px;'
+            f'background:color-mix(in oklch, {win_color} 8%, var(--bg-2));'
+            f'border-radius:0 7px 7px 0">'
+            f'  <div style="font-size:18px;flex:none">{icon}</div>'
+            f'  <div style="min-width:0">'
+            f'    <div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;'
+            f'color:{win_color};font-weight:700;margin-bottom:3px">{verb}</div>'
+            f'    <div style="font-size:12px;color:var(--ink-1);line-height:1.45">'
+            f'{winner} affiche <b style="color:var(--ink-0)">{_fmt(v_win)}</b> sur '
+            f'<i>{d["label"]}</i> contre <b>{_fmt(v_lose)}</b> pour {loser} '
+            f'(écart percentile : <b style="color:{win_color}">+{int(d["abs_diff"])}</b>).'
+            f'    </div>'
+            f'  </div>'
+            f'</div>'
+        )
+
+    st.markdown(
+        card_open("Lecture rapide",
+                  actions_html='<span style="font-size:10px;color:var(--ink-3)">'
+                               'auto-extrait</span>'),
+        unsafe_allow_html=True,
+    )
+    st.markdown(insights_html, unsafe_allow_html=True)
+    # Boutons d'action
+    st.markdown(
+        '<div style="display:flex;gap:8px;margin-top:10px">'
+        '<button class="ef-badge" style="cursor:pointer;height:28px;padding:0 12px;'
+        'background:var(--bg-2);border:1px solid var(--line)">📸 Snapshot duel</button>'
+        '<button class="ef-badge solid" style="cursor:pointer;height:28px;padding:0 12px">'
+        '✦ Thread duel (Haiku)</button>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(card_close(), unsafe_allow_html=True)
+
+
+def _render_compare_table_html(
+    p1: str, p2: str,
+    common: list[str], display_labels: list[str],
+    p_pct1: list[float], p_pct2: list[float],
+    idx1: dict[str, int], idx2: dict[str, int],
+    r1: list[float], r2: list[float],
+) -> None:
+    """
+    Tableau de comparaison HTML pleine largeur, 5 colonnes :
+      MÉTRIQUE · p1 · DIFF · p2 · RÉPARTITION (barre split)
+    Cellule du gagnant teintée vert pâle, valeurs colorées vert/rouge,
+    bar de répartition proportionnelle aux valeurs absolues.
+    """
+    def _fmt(v):
+        try:
+            vf = float(v)
+            if abs(vf) >= 100:
+                return f"{vf:.0f}"
+            if abs(vf - round(vf)) < 0.05 and abs(vf) >= 10:
+                return f"{int(round(vf))}"
+            return f"{vf:.2f}"
+        except Exception:
+            return "—"
+
+    rows_html = ""
+    for c, lbl in zip(common, display_labels):
+        va = r1[idx1[c]]
+        vb = r2[idx2[c]]
+        try:
+            diff = float(va) - float(vb)
+        except Exception:
+            diff = 0.0
+
+        a_better = va > vb
+        equal = (va == vb)
+
+        a_color = "var(--ink-3)" if equal else ("var(--good)" if a_better else "var(--bad)")
+        b_color = "var(--ink-3)" if equal else ("var(--bad)" if a_better else "var(--good)")
+        a_bg = (
+            "color-mix(in oklch, var(--good) 15%, transparent)"
+            if a_better and not equal else "transparent"
+        )
+        b_bg = (
+            "color-mix(in oklch, var(--good) 15%, transparent)"
+            if not a_better and not equal else "transparent"
+        )
+
+        # Couleur du DIFF (vert si A gagne, rouge si B gagne)
+        if equal:
+            diff_color = "var(--ink-3)"
+            diff_str = "0"
+        else:
+            diff_color = "var(--good)" if a_better else "var(--bad)"
+            diff_sign = "+" if diff > 0 else ""
+            diff_str = f"{diff_sign}{_fmt(diff)}"
+
+        # Barre de répartition : split au centre, A à gauche / B à droite,
+        # tailles proportionnelles aux valeurs absolues.
+        try:
+            total = abs(float(va)) + abs(float(vb))
+        except Exception:
+            total = 0
+        if total > 0:
+            ratio_a = abs(float(va)) / total
+            ratio_b = abs(float(vb)) / total
+        else:
+            ratio_a = ratio_b = 0.5
+        bar_html = (
+            f'<div style="display:flex;height:8px;width:140px;align-items:stretch">'
+            f'  <div style="flex:1;display:flex;justify-content:flex-end;'
+            f'background:var(--bg-3);border-radius:3px 0 0 3px;overflow:hidden">'
+            f'    <div style="width:{ratio_a*100:.0f}%;background:var(--good)"></div>'
+            f'  </div>'
+            f'  <div style="flex:1;display:flex;justify-content:flex-start;'
+            f'background:var(--bg-3);border-radius:0 3px 3px 0;overflow:hidden">'
+            f'    <div style="width:{ratio_b*100:.0f}%;background:var(--bad)"></div>'
+            f'  </div>'
+            f'</div>'
+        )
+
+        rows_html += (
+            f'<tr style="border-bottom:1px solid var(--line-faint)">'
+            f'  <td style="padding:11px 16px;color:var(--ink-1);font-size:12.5px">'
+            f'{lbl}</td>'
+            f'  <td style="padding:11px 16px;text-align:right;background:{a_bg};'
+            f'color:{a_color};font-family:ui-monospace,monospace;'
+            f'font-size:13px;font-weight:600">{_fmt(va)}</td>'
+            f'  <td style="padding:11px 16px;text-align:center;color:{diff_color};'
+            f'font-family:ui-monospace,monospace;font-size:11px;font-weight:500">'
+            f'{diff_str}</td>'
+            f'  <td style="padding:11px 16px;text-align:right;background:{b_bg};'
+            f'color:{b_color};font-family:ui-monospace,monospace;'
+            f'font-size:13px;font-weight:600">{_fmt(vb)}</td>'
+            f'  <td style="padding:11px 16px;width:160px">{bar_html}</td>'
+            f'</tr>'
+        )
+
+    table_html = (
+        f'<div style="margin-top:18px">'
+        f'<table style="width:100%;border-collapse:collapse;background:var(--bg-1);'
+        f'border:1px solid var(--line-faint);border-radius:10px;overflow:hidden">'
+        f'  <thead>'
+        f'    <tr style="background:var(--bg-2);border-bottom:1px solid var(--line)">'
+        f'      <th style="padding:10px 16px;text-align:left;font-size:9.5px;'
+        f'letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);'
+        f'font-weight:600">Métrique</th>'
+        f'      <th style="padding:10px 16px;text-align:right;font-size:9.5px;'
+        f'letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);'
+        f'font-weight:600">{p1}</th>'
+        f'      <th style="padding:10px 16px;text-align:center;font-size:9.5px;'
+        f'letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);'
+        f'font-weight:600">Diff.</th>'
+        f'      <th style="padding:10px 16px;text-align:right;font-size:9.5px;'
+        f'letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);'
+        f'font-weight:600">{p2}</th>'
+        f'      <th style="padding:10px 16px;text-align:center;font-size:9.5px;'
+        f'letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);'
+        f'font-weight:600">Répartition</th>'
+        f'    </tr>'
+        f'  </thead>'
+        f'  <tbody>{rows_html}</tbody>'
+        f'</table>'
+        f'</div>'
+    )
+
+    st.markdown(table_html, unsafe_allow_html=True)
