@@ -257,6 +257,38 @@ def render(season: str, league: str) -> None:
         textfont=dict(size=9, color=COLORS["text_muted"]),
         selector=dict(mode="markers" if not show_labels else "markers+text"),
     )
+
+    # ── Quadrant labels (↗ÉLITES ↖CRÉATEURS ↘RENARDS ↙SOUTIENS) ─────────────
+    # Plotly n'accepte pas oklch() → utiliser hex/rgba
+    if not use_kmeans:
+        x_med = float(work_plot[x_col].median())
+        y_med = float(work_plot[y_col].median())
+        x_max = float(work_plot[x_col].max())
+        y_max = float(work_plot[y_col].max())
+        x_min = float(work_plot[x_col].min())
+        y_min = float(work_plot[y_col].min())
+        # Lignes médianes en pointillés
+        median_color = "#4a4d5e"  # gris medium
+        fig.add_shape(type="line", x0=x_med, x1=x_med, y0=y_min, y1=y_max,
+                      line=dict(dash="dash", width=0.8, color=median_color))
+        fig.add_shape(type="line", x0=x_min, x1=x_max, y0=y_med, y1=y_med,
+                      line=dict(dash="dash", width=0.8, color=median_color))
+        for x_pos, y_pos, txt, color in [
+            (x_max, y_max, "↗ ÉLITES",  "#84e06e"),   # vert
+            (x_min, y_max, "↖ SPÉC. Y", "#b87bf0"),   # violet
+            (x_max, y_min, "↘ SPÉC. X", "#b87bf0"),   # violet
+            (x_min, y_min, "↙ FAIBLES", "#e8754b"),   # rouge-orange
+        ]:
+            xa = "right" if x_pos == x_max else "left"
+            ya = "top"   if y_pos == y_max else "bottom"
+            fig.add_annotation(
+                x=x_pos, y=y_pos, text=txt, showarrow=False,
+                font=dict(size=10, color=color),
+                xanchor=xa, yanchor=ya,
+                bgcolor="rgba(26,26,46,0.7)",
+                borderwidth=0,
+            )
+
     fig.update_layout(
         **PLOTLY_LAYOUT, height=620,
         title=(

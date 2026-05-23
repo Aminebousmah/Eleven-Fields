@@ -265,48 +265,49 @@ def _filter_widgets(target) -> tuple[str, str]:
 
 def render_show_gate(
     state_key: str,
-    label: str = "📊  Afficher les résultats",
-    hint: str = "Configure tes filtres ci-dessus, puis clique sur **Afficher** pour générer l'analyse.",
+    label: str = "📊  Afficher",
+    hint: str = "Configure tes filtres ci-dessus, puis clique sur Afficher pour générer l'analyse.",
+    icon: str = "◉",
+    primary_text: str = "Configure tes filtres",
 ) -> bool:
     """
-    Affiche un bouton 'Afficher' tant que l'utilisateur ne l'a pas cliqué.
-    Retourne True si l'utilisateur a cliqué (état persistant via session_state),
-    False sinon.
+    Empty state animée + bouton 'Afficher'. Tant que l'utilisateur n'a pas
+    cliqué, l'onglet affiche un message vide pulsé. Une fois cliqué, l'état
+    reste True jusqu'au changement d'onglet (reset auto par app.py).
 
-    Utilisation typique en haut d'un dashboard :
+    Utilisation :
 
         # ... filtres ...
-
         if not render_show_gate("ranking_player"):
             return
-
-        # ... visualisations (s'exécute uniquement après clic) ...
+        # ... visualisations ...
     """
     flag = f"{state_key}_shown"
     if flag not in st.session_state:
         st.session_state[flag] = False
 
     if st.session_state[flag]:
-        # Déjà cliqué : bouton réinitialiser discret
+        # Déjà cliqué : petit bouton Réinitialiser à droite des filtres
         c1, c2 = st.columns([1, 5])
         with c1:
-            if st.button("🔄  Réinitialiser", key=f"reset_{state_key}_btn",
+            if st.button("↺  Réinitialiser", key=f"reset_{state_key}_btn",
                          use_container_width=True):
                 st.session_state[flag] = False
                 st.rerun()
         return True
 
-    # Pas encore cliqué : bouton Afficher + message d'aide
-    c1, c2 = st.columns([1.5, 5])
-    with c1:
+    # Pas encore cliqué : empty state pulsée + bouton primary
+    from components.design import empty_state
+    st.markdown(
+        empty_state(primary=primary_text, secondary=hint, icon=icon),
+        unsafe_allow_html=True,
+    )
+
+    # Bouton Afficher centré sous l'empty state
+    _, c_btn, _ = st.columns([2, 1, 2])
+    with c_btn:
         clicked = st.button(label, key=f"show_{state_key}_btn",
                             type="primary", use_container_width=True)
-    with c2:
-        st.markdown(
-            f"<div style='color:{COLORS['text_muted']};padding-top:8px;"
-            f"font-size:0.88rem'>💡 {hint}</div>",
-            unsafe_allow_html=True,
-        )
 
     if clicked:
         st.session_state[flag] = True
@@ -603,6 +604,55 @@ def select_two_players(
         p2, t2, _ = select_player(season_key, league, key_prefix="pB")
 
     return (p1, t1), (p2, t2)
+
+
+def select_two_players_compact(
+    season_key: str,
+    league: str,
+    label_a: str = "Joueur A",
+    label_b: str = "Joueur B",
+) -> tuple[tuple[str, str], tuple[str, str]]:
+    """
+    Variante compacte horizontale : 2 selectbox autocomplete sans filtres.
+    Retourne ((p1, t1), (p2, t2)).
+    Utilisé par les vues "duel" qui veulent un filtre rail compact.
+    """
+    pdf = load_player_season_stats("standard", [season_key])
+    if league != "Toutes les ligues":
+        pdf = pdf[pdf["league"] == league]
+    if pdf.empty:
+        return ("", ""), ("", "")
+
+    # Construit options "Player — Team"
+    pdf = pdf.dropna(subset=["player", "team"]).copy()
+    pdf["__opt"] = pdf["player"] + " — " + pdf["team"]
+    options = sorted(pdf["__opt"].unique().tolist())
+
+    cA, cB = st.columns(2)
+    with cA:
+        sel_a = st.selectbox(
+            label_a, options=options,
+            key="duel_pA", placeholder="Recherche…",
+        )
+    with cB:
+        # Pré-sélectionne un joueur différent par défaut
+        default_b = options[1] if len(options) > 1 else (options[0] if options else None)
+        try:
+            idx_b = options.index(st.session_state.get("duel_pB", default_b))
+        except ValueError:
+            idx_b = 1 if len(options) > 1 else 0
+        sel_b = st.selectbox(
+            label_b, options=options,
+            index=idx_b, key="duel_pB", placeholder="Recherche…",
+        )
+
+    def _split(opt: str) -> tuple[str, str]:
+        if not opt or " — " not in opt:
+            return ("", "")
+        p, t = opt.split(" — ", 1)
+        return (p.strip(), t.strip())
+
+    return _split(sel_a), _split(sel_b)
 
 
 # ── Utilitaires ──────────────────────────────────────────────────────────────

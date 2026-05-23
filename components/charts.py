@@ -675,3 +675,55 @@ def make_form_strip(results: list[str], team: str = "") -> go.Figure:
         )
     )
     return fig
+
+
+# ── Radar wedge (style DataScout : chaque axe = part de tarte colorée) ───────
+
+def make_wedge_radar(
+    labels: list[str],
+    percentiles: list[float],
+    title: str = "",
+    size: int = 380,
+) -> go.Figure:
+    """
+    Radar "wedge" : chaque axe devient une part de pizza colorée par quintile.
+    Lecture sans légende possible (rouge=faible, vert=élite).
+    """
+    def _quintile_color(p: float) -> str:
+        if p < 20:  return "#e85a4f"
+        if p < 40:  return "#f0a04b"
+        if p < 60:  return "#f5d76e"
+        if p < 80:  return "#8ac765"
+        return "#4dd887"
+
+    if not labels:
+        return go.Figure()
+
+    colors = [_quintile_color(p) for p in percentiles]
+    fig = go.Figure(go.Barpolar(
+        r=percentiles,
+        theta=labels,
+        marker=dict(color=colors, line=dict(width=1.5, color="#16213e")),
+        opacity=0.92,
+        hovertemplate="<b>%{theta}</b><br>Percentile : %{r:.0f}<extra></extra>",
+    ))
+    fig.update_layout(
+        **PLOTLY_LAYOUT,
+        title=title,
+        height=size,
+        showlegend=False,
+        polar=dict(
+            bgcolor="rgba(26,26,46,0.3)",
+            radialaxis=dict(
+                range=[0, 100],
+                showticklabels=False,
+                gridcolor="#2d2d4e",
+                tickvals=[20, 40, 60, 80, 100],
+            ),
+            angularaxis=dict(
+                gridcolor="#2d2d4e",
+                tickfont=dict(size=10, color="#a0a3b1"),
+            ),
+        ),
+    )
+    return fig

@@ -551,10 +551,14 @@ def render(season: str, league: str) -> None:
     league_filter = None if league == "Toutes les ligues" else league
     league_label = LEAGUE_LABELS.get(league_filter, league_filter or "Big 5")
 
+    # ── Filter rail compact (mode + saison/ligue déjà dans le topbar) ────────
     st.markdown(
-        f"<h2 style='color:{COLORS['text']};margin-bottom:0'>🧩 Composition</h2>"
-        f"<div style='color:{COLORS['text_muted']};font-size:0.85rem;margin-bottom:14px'>"
-        f"Tableau tactique interactif · {league_label} · {season}</div>",
+        '<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;'
+        'margin-bottom:12px;border-radius:10px;background:var(--bg-1);'
+        'border:1px solid var(--line-faint)">'
+        '<span style="font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;'
+        'color:var(--ink-3)">Constructeur XI · drag &amp; drop sur le terrain</span>'
+        '</div>',
         unsafe_allow_html=True,
     )
 

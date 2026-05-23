@@ -25,6 +25,11 @@ from data.processor import (
     compute_dominant_profile, compute_profile_scores,
     player_profile_evolution,
 )
+from components.design import (
+    badge, card_open, card_close, stat_tile, stat_grid,
+    pct_color_css, pos_class, gauge_svg, section_header, pin_button,
+    pitch_heatmap_svg,
+)
 
 # Module Transfermarkt — optionnel : si dataset absent, fallback silencieux
 try:
@@ -98,56 +103,14 @@ def render(season: str, league: str) -> None:
     foot = tm.get("foot") if tm else ""
     flag_html = flag_img_html(nation, size=18) if nation else ""
 
-    # ── En-tête joueur (avec photo si dispo) ─────────────────────────────────
-    h1, h2 = st.columns([1, 5]) if photo_url else (None, None)
-    if photo_url:
-        with h1:
-            st.image(photo_url, width=110)
-        with h2:
-            _nation_part = (
-                " &nbsp;·&nbsp; " + flag_html + "&nbsp;" + nation
-                if nation else ""
-            )
-            _foot_part = f" &nbsp;·&nbsp; pied {foot}" if foot else ""
-            st.markdown(
-                "<div style='padding:4px 0'>"
-                "<div style='font-size:1.7rem;font-weight:800;color:" + COLORS["text"] + "'>" + player + "</div>"
-                "<div style='font-size:0.9rem;color:" + COLORS["text_muted"] + ";margin-top:4px'>"
-                + team + " &nbsp;·&nbsp; " + str(r.get("pos", "—")) + " &nbsp;·&nbsp; " + str(r.get("age", "—")) + " ans"
-                + _nation_part + _foot_part
-                + "</div>"
-                "<div style='font-size:0.8rem;color:" + COLORS["text_muted"] + ";margin-top:2px'>"
-                + league_label + " &nbsp;·&nbsp; " + season
-                + "</div></div>",
-                unsafe_allow_html=True,
-            )
-    else:
-        _nation_part2 = (
-            " &nbsp;·&nbsp; " + flag_html + "&nbsp;" + nation
-            if nation else ""
-        )
-        st.markdown(
-            "<div style='padding:8px 0 4px 0'>"
-            "<div style='font-size:1.6rem;font-weight:800;color:" + COLORS["text"] + "'>" + player + "</div>"
-            "<div style='font-size:0.85rem;color:" + COLORS["text_muted"] + ";margin-top:2px'>"
-            + team + " &nbsp;·&nbsp; " + str(r.get("pos", "—")) + " &nbsp;·&nbsp; " + str(r.get("age", "—")) + " ans"
-            + _nation_part2
-            + " &nbsp;·&nbsp; " + league_label + " &nbsp;·&nbsp; " + season
-            + "</div></div>",
-            unsafe_allow_html=True,
-        )
-
-    kpis = [
-        {"label": "Buts",     "value": fmt(r.get("Gls", "—"), 0), "color": COLORS["accent_green"]},
-        {"label": "Passes D", "value": fmt(r.get("Ast", "—"), 0), "color": COLORS["accent_blue"]},
-        {"label": "xG",       "value": fmt(r.get("xG",  "—")),    "color": COLORS["accent_gold"]},
-        {"label": "Minutes",  "value": fmt(r.get("Min", "—"), 0), "color": COLORS["accent_red"]},
-        {"label": "Matchs",   "value": fmt(r.get("MP",  "—"), 0), "color": COLORS["text_muted"]},
-    ]
-    if market_value is not None and pd.notna(market_value):
-        kpis.insert(0, {"label": "Valeur marchande", "value": format_value(market_value),
-                        "color": COLORS["accent_gold"]})
-    render_kpi_row(kpis)
+    # ──────────────────────────────────────────────────────────────────────────
+    # NOUVEAU DESIGN — Header + Row 1 + Row 2 + Row 2.5 (projection + trend)
+    # ──────────────────────────────────────────────────────────────────────────
+    _render_new_header(player, team, r, season, league_label, photo_url,
+                       market_value, nation, foot, flag_html)
+    _render_overview_row(player, team, pos_group, season, league_filter, r)
+    _render_percentile_bands_row(player, team, pos_group, season, league_filter)
+    _render_player_trend_and_evolution(player, team, pos_group, league_filter, r)
 
     st.divider()
 
@@ -681,3 +644,712 @@ def _build_markdown_report(player: str, team: str, pos_group: str,
     lines.append(f"*Rapport généré par ElevenField · {season_label}*")
 
     return "\n".join(lines)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# REFONTE v2 — PlayerHeader + Row 1 d'overview (design Claude Design)
+# ════════════════════════════════════════════════════════════════════════════
+
+def _render_new_header(player, team, r, season, league_label, photo_url,
+                       market_value, nation, foot, flag_html):
+    """
+    Grand header joueur : photo + identité + KPIs en stat tiles.
+    Inspiré de PlayerHeader du bundle.jsx.
+    """
+    age = r.get("age", "")
+    pos = str(r.get("pos", "—"))
+    pos_cls = pos_class(pos)
+
+    cols = st.columns([1.3, 4.5, 3.5], gap="medium")
+    with cols[0]:
+        if photo_url:
+            st.image(photo_url, width=140)
+        else:
+            st.markdown(
+                '<div style="width:140px;height:140px;border-radius:14px;'
+                'background:var(--bg-2);border:1px solid var(--line);'
+                'display:flex;align-items:center;justify-content:center;'
+                'font-size:54px;color:var(--ink-3)">👤</div>',
+                unsafe_allow_html=True,
+            )
+
+    with cols[1]:
+        pos_first = pos.split(",")[0].strip() if pos and pos != "—" else ""
+        pos_badge = badge(pos_first, pos_cls) if pos_first else ""
+        flag_block = (
+            f'<span style="margin-left:8px">{flag_html} {nation}</span>'
+            if nation else ""
+        )
+        foot_part = (
+            f' <span style="color:var(--ink-3)">· pied {foot}</span>'
+            if foot else ""
+        )
+        st.markdown(
+            f'<div style="padding-top:6px">'
+            f'  <div style="font-size:28px;font-weight:700;color:var(--ink-0);'
+            f'line-height:1.1;letter-spacing:-0.02em">{player}</div>'
+            f'  <div style="display:flex;align-items:center;gap:8px;margin-top:8px;'
+            f'font-size:12.5px;color:var(--ink-2);flex-wrap:wrap">'
+            f'    <span style="font-weight:600;color:var(--ink-1)">{team}</span>'
+            f'    <span style="color:var(--ink-4)">·</span>'
+            f'    {pos_badge}'
+            f'    <span style="color:var(--ink-4)">·</span>'
+            f'    <span>{age} ans</span>'
+            f'    {flag_block}{foot_part}'
+            f'  </div>'
+            f'  <div style="font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;'
+            f'color:var(--ink-3);margin-top:10px">{league_label} · {season}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    with cols[2]:
+        def _fmt(v, d=0):
+            try:
+                return f"{float(v):.{d}f}"
+            except Exception:
+                return "—"
+
+        mv_str = (
+            format_value(market_value)
+            if (market_value is not None and pd.notna(market_value))
+            else "—"
+        )
+        tiles = [
+            stat_tile("BUTS",     _fmt(r.get("Gls"), 0)),
+            stat_tile("PASSES D", _fmt(r.get("Ast"), 0)),
+            stat_tile("xG",       _fmt(r.get("xG"), 1)),
+            stat_tile("MINUTES",  _fmt(r.get("Min"), 0)),
+        ]
+        st.markdown(stat_grid(tiles, cols=2, gap="6px"), unsafe_allow_html=True)
+        if mv_str != "—":
+            st.markdown(
+                f'<div class="ef-stat" style="margin-top:6px;background:'
+                f'color-mix(in oklch, var(--accent) 14%, var(--bg-2));'
+                f'border-color:color-mix(in oklch, var(--accent) 40%, var(--line))">'
+                f'  <div class="k" style="color:var(--accent-2)">VALEUR MARCHÉ</div>'
+                f'  <div class="v" style="color:var(--accent)">{mv_str}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+
+def _render_overview_row(player, team, pos_group, season, league_filter, r):
+    """
+    Row 1 du design : 3 cartes côte à côte
+      1. Indice de performance (gauge + bandes quintiles)
+      2. Top 3 profils tactiques (ranked)
+      3. Joueurs similaires (mini cards)
+    """
+    cols = st.columns([1.2, 2, 1.5], gap="medium")
+
+    # 1. Indice de performance (gauge)
+    with cols[0]:
+        try:
+            top_profile, top_score, all_scores = compute_dominant_profile(
+                player, team, season, league_filter,
+                pos_group=pos_group, min_minutes=500,
+            )
+        except Exception:
+            top_profile, top_score, all_scores = ("—", 0.0, {})
+
+        st.markdown(card_open("Indice de performance"), unsafe_allow_html=True)
+        pin_button(
+            f"gauge-{player}", "Indice de performance",
+            f"{player} · {top_profile} {top_score:.0f}/100", "gauge",
+        )
+        st.markdown(
+            f'<div style="display:flex;justify-content:center;padding:6px 0 10px">'
+            f'{gauge_svg(top_score, max_value=100, label=top_profile, size=140)}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        # 5 bandes quintiles
+        bands = ["0-19", "20-39", "40-59", "60-79", "80-100"]
+        current_band = min(int(top_score // 20), 4) if top_score else 0
+        band_colors = ["pct-1", "pct-2", "pct-3", "pct-4", "pct-5"]
+        bands_html = ""
+        for i, (lbl, col_var) in enumerate(zip(bands, band_colors)):
+            is_active = (i == current_band)
+            opacity = "60%" if is_active else "18%"
+            ink = "var(--ink-0)" if is_active else "var(--ink-3)"
+            bands_html += (
+                f'<div style="height:26px;border-radius:5px;'
+                f'background:color-mix(in oklch, var(--{col_var}) {opacity}, var(--bg-2));'
+                f'border:1px solid var(--line-faint);display:flex;align-items:center;'
+                f'justify-content:center;font-family:ui-monospace,monospace;'
+                f'font-size:10px;color:{ink}">{lbl}</div>'
+            )
+        st.markdown(
+            f'<div style="display:grid;grid-template-columns:repeat(5,1fr);'
+            f'gap:4px;margin-top:6px">{bands_html}</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f'<div style="font-size:11px;color:var(--ink-3);margin-top:10px;'
+            f'line-height:1.5">Score composite pondéré selon le profil dominant. '
+            f'Comparaison vs joueurs {pos_group} (≥ 500 min).</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(card_close(), unsafe_allow_html=True)
+
+    # 2. Top 3 profils tactiques
+    with cols[1]:
+        st.markdown(
+            card_open("Top 3 profils tactiques",
+                      actions_html='<span style="font-size:10px;color:var(--ink-3)">'
+                                   'sur 29 archétypes</span>'),
+            unsafe_allow_html=True,
+        )
+        top3 = (
+            sorted(all_scores.items(), key=lambda kv: kv[1], reverse=True)[:3]
+            if all_scores else []
+        )
+        if not top3:
+            st.markdown(
+                '<div style="font-size:12px;color:var(--ink-3);padding:20px 0;'
+                'text-align:center">Pas de profil détecté.</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            for i, (pname, pscore) in enumerate(top3):
+                tagline = PLAYER_PROFILES.get(pname, {}).get("tagline", "")
+                accent_active = (i == 0)
+                bg = ("color-mix(in oklch, var(--accent) 10%, var(--bg-2))"
+                      if accent_active else "var(--bg-2)")
+                border = ("color-mix(in oklch, var(--accent) 40%, var(--line))"
+                          if accent_active else "var(--line-faint)")
+                rank_color = "var(--accent)" if accent_active else "var(--ink-3)"
+                score_color = pct_color_css(pscore)
+                st.markdown(
+                    f'<div style="display:grid;grid-template-columns:30px 1fr 70px;'
+                    f'gap:12px;align-items:center;padding:10px 12px;border-radius:9px;'
+                    f'background:{bg};border:1px solid {border};margin-bottom:6px">'
+                    f'  <div style="font-family:ui-monospace,monospace;font-size:18px;'
+                    f'font-weight:600;color:{rank_color}">{i+1}</div>'
+                    f'  <div>'
+                    f'    <div style="font-size:13px;font-weight:600;color:var(--ink-0)">{pname}</div>'
+                    f'    <div style="font-size:11px;color:var(--ink-3);margin-top:2px;'
+                    f'line-height:1.4">{tagline}</div>'
+                    f'  </div>'
+                    f'  <div style="text-align:right">'
+                    f'    <div style="font-family:ui-monospace,monospace;font-size:20px;'
+                    f'font-weight:600;color:{score_color}">{pscore:.0f}</div>'
+                    f'    <div style="font-size:9px;letter-spacing:.1em;'
+                    f'text-transform:uppercase;color:var(--ink-3)">match</div>'
+                    f'  </div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        st.markdown(card_close(), unsafe_allow_html=True)
+
+    # 3. Joueurs similaires
+    with cols[2]:
+        st.markdown(
+            card_open("Joueurs similaires",
+                      actions_html='<span style="font-size:10px;color:var(--ink-3)">cosine</span>'),
+            unsafe_allow_html=True,
+        )
+        try:
+            sim = find_similar_players(
+                player, team, season, league_filter,
+                pos_group=pos_group, n=3, min_minutes=500,
+            )
+        except Exception:
+            sim = pd.DataFrame()
+
+        if sim.empty:
+            st.markdown(
+                '<div style="font-size:12px;color:var(--ink-3);padding:20px 0;'
+                'text-align:center">Aucun joueur similaire.</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            sim_enriched = enrich_with_photos(sim.copy(), player_col="player",
+                                              league=league_filter)
+            for _, srow in sim_enriched.iterrows():
+                spname = srow.get("player", "")
+                stteam = srow.get("team", "")
+                ssim = float(srow.get("compat_pct", 0))
+                sphoto = srow.get("image_url")
+                age_s = srow.get("age", "")
+                photo_html = (
+                    f'<img src="{sphoto}" style="width:36px;height:36px;'
+                    f'border-radius:50%;object-fit:cover;flex:none"/>'
+                    if sphoto and pd.notna(sphoto)
+                    else '<div style="width:36px;height:36px;border-radius:50%;'
+                         'background:var(--bg-3);display:flex;align-items:center;'
+                         'justify-content:center;font-size:18px;flex:none">👤</div>'
+                )
+                score_color = pct_color_css(ssim)
+                st.markdown(
+                    f'<div style="display:grid;grid-template-columns:36px 1fr 60px;'
+                    f'gap:10px;align-items:center;padding:8px;border-radius:8px;'
+                    f'background:var(--bg-2);border:1px solid var(--line-faint);'
+                    f'margin-bottom:6px">'
+                    f'  {photo_html}'
+                    f'  <div style="min-width:0">'
+                    f'    <div style="font-size:12.5px;font-weight:500;color:var(--ink-0);'
+                    f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{spname}</div>'
+                    f'    <div style="font-size:10.5px;color:var(--ink-3)">{stteam} · {age_s} ans</div>'
+                    f'  </div>'
+                    f'  <div style="text-align:right">'
+                    f'    <div style="font-family:ui-monospace,monospace;font-size:15px;'
+                    f'font-weight:600;color:{score_color}">{ssim:.0f}%</div>'
+                    f'    <div style="font-size:9px;color:var(--ink-3)">sim.</div>'
+                    f'  </div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        st.markdown(card_close(), unsafe_allow_html=True)
+
+
+# ─── Row 2 — Percentile bands catégorisés + Strengths/Weaknesses ─────────────
+
+# Bandes de métriques par catégorie (label_fr, stat_type, col, short_label)
+_BANDS_BY_POS: dict[str, list[tuple[str, list[tuple[str, str, str]]]]] = {
+    "FW": [
+        ("FINITION", [
+            ("Buts/90",       "standard", "Gls"),
+            ("xG/90",         "shooting", "xG"),
+            ("Tirs cadrés %", "shooting", "SoT%"),
+            ("Conversion %",  "shooting", "G/Sh"),
+        ]),
+        ("CRÉATION", [
+            ("xA/90",       "passing", "xAG"),
+            ("Passes clés", "passing", "KP"),
+            ("SCA",         "goal_shot_creation", "SCA"),
+            ("GCA",         "goal_shot_creation", "GCA"),
+        ]),
+        ("OFFENSIF", [
+            ("Courses prog.", "standard",   "PrgC"),
+            ("Reçues prog.",  "standard",   "PrgR"),
+            ("Dribbles %",    "possession", "Succ%"),
+        ]),
+        ("AÉRIEN / PHYSIQUE", [
+            ("Duels aériens %", "misc", "Won%"),
+            ("Fautes subies",   "misc", "Fld"),
+        ]),
+    ],
+    "MF": [
+        ("CONSTRUCTION", [
+            ("Précision passes %", "passing",    "Cmp%"),
+            ("Passes prog.",       "standard",   "PrgP"),
+            ("Touches",            "possession", "Touches"),
+            ("Dernier tiers",      "passing",    "1/3"),
+        ]),
+        ("CRÉATION", [
+            ("xA/90",        "passing", "xAG"),
+            ("Passes clés",  "passing", "KP"),
+            ("SCA",          "goal_shot_creation", "SCA"),
+        ]),
+        ("DÉFENSE", [
+            ("Tacles",         "defense", "Tkl"),
+            ("Interceptions",  "defense", "Int"),
+            ("Récupérations",  "misc",    "Recov"),
+        ]),
+        ("OFFENSIF", [
+            ("Courses prog.", "standard",   "PrgC"),
+            ("Dribbles %",    "possession", "Succ%"),
+        ]),
+    ],
+    "DF": [
+        ("DÉFENSE", [
+            ("Tacles",         "defense", "Tkl"),
+            ("Interceptions",  "defense", "Int"),
+            ("Blocs",          "defense", "Blocks"),
+            ("Dégagements",    "misc",    "Clr"),
+            ("Récupérations",  "misc",    "Recov"),
+        ]),
+        ("AÉRIEN", [
+            ("Duels aériens %", "misc", "Won%"),
+            ("Duels gagnés",    "misc", "Won"),
+        ]),
+        ("CONSTRUCTION", [
+            ("Précision passes %", "passing",  "Cmp%"),
+            ("Passes prog.",       "standard", "PrgP"),
+            ("Dernier tiers",      "passing",  "1/3"),
+        ]),
+        ("DISCIPLINE", [
+            ("Fautes",        "misc",     "Fls"),
+            ("Cartons jaunes","standard", "CrdY"),
+        ]),
+    ],
+    "GK": [
+        ("ARRÊTS", [
+            ("Save %",  "keeper", "Save%"),
+            ("CS",      "keeper", "CS"),
+        ]),
+        ("DISTRIBUTION", [
+            ("Précision passes %", "keeper_adv", "Cmp%"),
+            ("Longues passes %",   "keeper_adv", "Launch%"),
+        ]),
+        ("AVANCÉ", [
+            ("PSxG - GA",       "keeper_adv", "PSxG-GA"),
+            ("PSxG / SoT",      "keeper_adv", "PSxG/SoT"),
+        ]),
+    ],
+}
+
+
+def _pct_for_metric(player, team, stat_type, col, season, league_filter,
+                    pos_group, min_minutes=500):
+    """Calcule (valeur brute, percentile 0-100) du joueur sur une métrique."""
+    from data.processor import percentile_score, _pos_to_group_simple, _to_per_90, _RATE_STATS
+
+    df = load_player_season_stats(stat_type, [season])
+    if league_filter:
+        df = df[df["league"] == league_filter]
+    if col not in df.columns:
+        return None, None
+
+    std = load_player_season_stats("standard", [season])
+    if league_filter:
+        std = std[std["league"] == league_filter]
+
+    # Pool de référence : même pos_group + minutes minimum
+    std = std.copy()
+    std["Min"] = pd.to_numeric(std["Min"], errors="coerce")
+    pool = std[
+        (std["pos"].apply(_pos_to_group_simple) == pos_group)
+        & (std["Min"].fillna(0) >= min_minutes)
+    ][["player", "team", "Min"]].drop_duplicates(subset=["player", "team"])
+    if pool.empty:
+        return None, None
+
+    sub = df[["player", "team", col]].drop_duplicates(subset=["player", "team"])
+    sub = sub.merge(pool, on=["player", "team"], how="inner")
+    if sub.empty:
+        return None, None
+
+    sub["__val"] = pd.to_numeric(sub[col], errors="coerce")
+    # Ramener à /90 si métrique cumulative
+    if col not in _RATE_STATS:
+        sub["__val"] = sub.apply(
+            lambda x: _to_per_90(x["__val"], x["Min"]) if pd.notna(x["__val"]) else None,
+            axis=1,
+        )
+    series = sub["__val"].dropna()
+    if series.empty:
+        return None, None
+
+    row = sub[(sub["player"] == player) & (sub["team"] == team)]
+    if row.empty or pd.isna(row["__val"].values[0]):
+        return None, None
+
+    val = float(row["__val"].values[0])
+    pct = percentile_score(series, val)
+    return val, pct
+
+
+def _render_percentile_bands_row(player, team, pos_group, season, league_filter):
+    """
+    Row 2 : grand bloc 2 colonnes
+      - Gauche : Percentile bands groupées par catégorie (style DataScout)
+      - Droite : carte Points forts + carte À améliorer (auto-extraits)
+    """
+    bands = _BANDS_BY_POS.get(pos_group, _BANDS_BY_POS["FW"])
+
+    cols = st.columns([3, 1], gap="medium")
+
+    # ── Gauche : Percentile bands ────────────────────────────────────────────
+    with cols[0]:
+        # Légende heatmap dans le header de carte
+        legend_html = (
+            '<div style="display:flex;align-items:center;gap:4px;font-size:10px;'
+            'color:var(--ink-3)">Heatmap '
+            + "".join(
+                f'<div style="width:12px;height:5px;border-radius:1px;'
+                f'background:var(--{c})"></div>'
+                for c in ["pct-1", "pct-2", "pct-3", "pct-4", "pct-5"]
+            )
+            + ' <span style="font-family:ui-monospace,monospace">0 → 100</span></div>'
+        )
+        st.markdown(
+            card_open(f"Percentiles par bande · vs. joueurs {pos_group} (≥ 500 min)",
+                      actions_html=legend_html),
+            unsafe_allow_html=True,
+        )
+
+        # Calculer tous les percentiles + collecter pour strengths/weaknesses
+        all_metrics = []  # [(label, percentile, value_str), ...]
+        bands_data = []
+        for band_name, metrics in bands:
+            band_rows = []
+            for label, stat_type, col in metrics:
+                val, pct = _pct_for_metric(player, team, stat_type, col,
+                                           season, league_filter, pos_group)
+                if pct is None:
+                    continue
+                value_str = (
+                    f"{int(round(val))}" if val == int(val) and abs(val) >= 10
+                    else f"{val:.1f}"
+                )
+                band_rows.append((label, pct, value_str))
+                all_metrics.append((label, pct, value_str))
+            if band_rows:
+                bands_data.append((band_name, band_rows))
+
+        if not bands_data:
+            st.markdown(
+                '<div style="font-size:12px;color:var(--ink-3);padding:20px 0;'
+                'text-align:center">Pas de données suffisantes.</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            # Grille 2 colonnes pour les bandes
+            band_cells_html = ""
+            for band_name, rows in bands_data:
+                avg = sum(p for _, p, _ in rows) / len(rows)
+                rows_html = ""
+                for lbl, pct, val_str in rows:
+                    col_var = pct_color_css(pct)
+                    rows_html += (
+                        f'<div style="display:grid;grid-template-columns:130px 1fr 36px;'
+                        f'gap:8px;align-items:center;height:22px;font-size:11.5px">'
+                        f'  <div style="color:var(--ink-1)">{lbl}'
+                        f'    <span style="color:var(--ink-3);font-size:10px;margin-left:4px">'
+                        f'{val_str}</span></div>'
+                        f'  <div style="position:relative;height:6px;'
+                        f'background:var(--bg-3);border-radius:3px;overflow:hidden">'
+                        f'    <div style="position:absolute;left:0;top:0;bottom:0;'
+                        f'width:{pct:.0f}%;background:{col_var};border-radius:3px;'
+                        f'box-shadow:0 0 0 1px color-mix(in oklch, {col_var} 50%, transparent)"></div>'
+                        f'  </div>'
+                        f'  <div style="text-align:right;font-weight:600;'
+                        f'color:{col_var};font-family:ui-monospace,monospace">'
+                        f'{int(round(pct))}</div>'
+                        f'</div>'
+                    )
+                band_cells_html += (
+                    f'<div style="display:flex;flex-direction:column;gap:4px">'
+                    f'  <div style="display:flex;align-items:baseline;gap:6px;'
+                    f'padding-bottom:4px;border-bottom:1px solid var(--line-faint)">'
+                    f'    <span style="font-size:11.5px;font-weight:600;color:var(--ink-1);'
+                    f'letter-spacing:.06em;text-transform:uppercase">{band_name}</span>'
+                    f'    <span style="color:var(--ink-3);font-family:ui-monospace,monospace;'
+                    f'font-size:10px;margin-left:auto">{int(round(avg))} avg</span>'
+                    f'  </div>'
+                    f'  <div style="display:flex;flex-direction:column;gap:5px;margin-top:6px">'
+                    f'  {rows_html}</div>'
+                    f'</div>'
+                )
+            st.markdown(
+                f'<div style="display:grid;grid-template-columns:1fr 1fr;'
+                f'gap:18px 28px">{band_cells_html}</div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown(card_close(), unsafe_allow_html=True)
+
+    # ── Droite : Points forts / À améliorer ──────────────────────────────────
+    with cols[1]:
+        if all_metrics:
+            strengths = sorted(all_metrics, key=lambda x: x[1], reverse=True)[:4]
+            weaknesses = sorted(all_metrics, key=lambda x: x[1])[:3]
+        else:
+            strengths, weaknesses = [], []
+
+        # Card Points forts
+        st.markdown(
+            f'<div class="ef-card" style="margin-bottom:10px">'
+            f'  <div class="ef-card-hd">'
+            f'    <span class="title" style="color:var(--good)">↗ Points forts</span>'
+            f'  </div>'
+            f'  <ul style="margin:0;padding:0;list-style:none;display:flex;'
+            f'flex-direction:column;gap:6px">'
+            + "".join(
+                f'<li style="display:flex;align-items:center;gap:8px;font-size:12px">'
+                f'<span style="width:6px;height:6px;border-radius:1px;'
+                f'background:var(--good)"></span>'
+                f'<span>{lbl} <span style="color:var(--ink-3);font-family:ui-monospace,monospace;'
+                f'margin-left:4px">{int(round(pct))}</span></span></li>'
+                for lbl, pct, _ in strengths
+            )
+            + '</ul></div>',
+            unsafe_allow_html=True,
+        )
+
+        # Card À améliorer
+        st.markdown(
+            f'<div class="ef-card">'
+            f'  <div class="ef-card-hd">'
+            f'    <span class="title" style="color:var(--bad)">↘ À améliorer</span>'
+            f'  </div>'
+            f'  <ul style="margin:0;padding:0;list-style:none;display:flex;'
+            f'flex-direction:column;gap:6px">'
+            + "".join(
+                f'<li style="display:flex;align-items:center;gap:8px;font-size:12px">'
+                f'<span style="width:6px;height:6px;border-radius:1px;'
+                f'background:var(--bad)"></span>'
+                f'<span>{lbl} <span style="color:var(--ink-3);font-family:ui-monospace,monospace;'
+                f'margin-left:4px">{int(round(pct))}</span></span></li>'
+                for lbl, pct, _ in weaknesses
+            )
+            + '</ul></div>',
+            unsafe_allow_html=True,
+        )
+
+
+# ─── Row 2.5 — Évolution multi-saisons + projection cross-ligue ──────────────
+
+def _render_player_trend_and_evolution(player, team, pos_group, league_filter, r):
+    """
+    Row 2.5 : 2 colonnes
+      - Évolution multi-saisons : score du profil dominant saison après saison
+      - Projection cross-ligue : niveau attendu si transféré dans une autre ligue
+    """
+    from config import SEASONS, LEAGUE_LABELS, LEAGUES
+
+    # ── Heatmap zones d'activité (mock blobs selon poste) ────────────────────
+    st.markdown(card_open("Heatmap · zones d'activité",
+                          actions_html='<span style="color:var(--ink-3);'
+                                       'font-size:10px">mock (à brancher sur SkillCorner)</span>'),
+                unsafe_allow_html=True)
+
+    # Blobs synthétiques selon le pos_group
+    blobs_by_pos = {
+        "FW": [(30, 22, 18, 0.7), (50, 35, 14, 0.5), (30, 50, 12, 0.4)],
+        "MF": [(50, 50, 20, 0.7), (40, 38, 12, 0.5), (60, 38, 12, 0.5),
+               (50, 65, 15, 0.55)],
+        "DF": [(30, 78, 18, 0.7), (70, 78, 18, 0.65), (50, 88, 14, 0.5)],
+        "GK": [(50, 92, 14, 0.8), (50, 80, 10, 0.4)],
+    }
+    blobs = blobs_by_pos.get(pos_group, blobs_by_pos["MF"])
+
+    pitch_col, info_col = st.columns([1, 2], gap="medium")
+    with pitch_col:
+        st.markdown(
+            f'<div style="display:flex;justify-content:center">'
+            f'{pitch_heatmap_svg(blobs, width=200, height=280, direction="up")}</div>',
+            unsafe_allow_html=True,
+        )
+    with info_col:
+        st.markdown(
+            f'<div style="padding-top:10px;font-size:12px;color:var(--ink-2);'
+            f'line-height:1.55">'
+            f'Représentation des zones d\'activité préférentielles selon le poste '
+            f'générique. Pour une heatmap réelle au mouvement près, il faudrait '
+            f'brancher une source de tracking (SkillCorner, StatsBomb 360).'
+            f'</div>'
+            f'<div style="display:grid;grid-template-columns:1fr 1fr;'
+            f'gap:8px;margin-top:14px">'
+            f'  <div class="ef-stat">'
+            f'    <div class="k">Zone dominante</div>'
+            f'    <div class="v" style="font-size:14px">'
+            f'{"Couloir / ⅓ off." if pos_group == "FW" else "Cœur du jeu" if pos_group == "MF" else "Bloc défensif"}'
+            f'</div>'
+            f'  </div>'
+            f'  <div class="ef-stat">'
+            f'    <div class="k">Direction d\'attaque</div>'
+            f'    <div class="v" style="font-size:14px;color:var(--accent)">▲ Haut</div>'
+            f'  </div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    st.markdown(card_close(), unsafe_allow_html=True)
+
+    cols = st.columns(2, gap="medium")
+
+    # ── Évolution multi-saisons ──────────────────────────────────────────────
+    with cols[0]:
+        st.markdown(card_open("Évolution multi-saisons",
+                              actions_html='<span style="color:var(--ink-3);'
+                                           'font-size:10px">score du profil dominant</span>'),
+                    unsafe_allow_html=True)
+        try:
+            evo = player_profile_evolution(
+                player, list(SEASONS.keys()), league_filter, min_minutes=500,
+            )
+        except Exception:
+            evo = pd.DataFrame()
+
+        if evo.empty:
+            st.markdown(
+                '<div style="font-size:12px;color:var(--ink-3);padding:30px 0;'
+                'text-align:center">Pas assez de saisons pour visualiser une évolution.</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            import plotly.graph_objects as go
+            from config import PLOTLY_LAYOUT
+            profile_col = evo.columns[1] if len(evo.columns) > 1 else None
+            if profile_col:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=evo["season"], y=evo[profile_col],
+                    mode="lines+markers",
+                    line=dict(color=COLORS["accent_green"], width=2.5),
+                    marker=dict(size=8, color=COLORS["accent_green"],
+                                line=dict(color="white", width=1)),
+                    fill="tozeroy",
+                    fillcolor="rgba(132, 224, 110, 0.10)",
+                ))
+                fig.update_layout(
+                    **PLOTLY_LAYOUT, height=240,
+                    showlegend=False,
+                    yaxis=dict(range=[0, 100], title="Score /100"),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                st.markdown(
+                    f'<div style="font-size:10.5px;color:var(--ink-3);'
+                    f'text-align:center;margin-top:-10px">Profil : <b>{profile_col}</b></div>',
+                    unsafe_allow_html=True,
+                )
+        st.markdown(card_close(), unsafe_allow_html=True)
+
+    # ── Projection cross-ligue ──────────────────────────────────────────────
+    with cols[1]:
+        st.markdown(card_open("Projection cross-ligue",
+                              actions_html='<span class="ef-badge solid" '
+                                           'style="font-size:10px">bêta</span>'),
+                    unsafe_allow_html=True)
+
+        current_league = r.get("league", "—")
+        other_leagues = [lg for lg in LEAGUES if lg != current_league]
+
+        st.markdown(
+            '<div style="font-size:11px;color:var(--ink-3);margin-bottom:10px">'
+            'Projection du niveau si transfert vers une autre ligue Big 5. '
+            'Pondération basée sur le niveau du championnat cible.</div>',
+            unsafe_allow_html=True,
+        )
+
+        league_coefs = {
+            "ENG-Premier League": 1.00,
+            "ESP-La Liga":        0.95,
+            "ITA-Serie A":        0.93,
+            "GER-Bundesliga":     0.92,
+            "FRA-Ligue 1":        0.88,
+        }
+        cur_coef = league_coefs.get(current_league, 0.90)
+        try:
+            from data.processor import compute_profile_scores
+            scores = compute_profile_scores(player, team, list(SEASONS.keys())[-1],
+                                             league=current_league, pos_group=pos_group,
+                                             min_minutes=500)
+            base_score = max(scores.values()) if scores else 70.0
+        except Exception:
+            base_score = 70.0
+
+        rows_html = ""
+        for lg in other_leagues:
+            coef = league_coefs.get(lg, 0.90)
+            projected = base_score * (cur_coef / coef)
+            projected = max(0, min(100, projected))
+            color = pct_color_css(projected)
+            rows_html += (
+                f'<div style="display:grid;grid-template-columns:1fr 60px 100px;'
+                f'gap:10px;align-items:center;padding:10px 4px;'
+                f'border-bottom:1px solid var(--line-faint)">'
+                f'  <div style="font-size:12.5px;color:var(--ink-1)">'
+                f'{LEAGUE_LABELS.get(lg, lg)}</div>'
+                f'  <div style="text-align:right;font-family:ui-monospace,monospace;'
+                f'font-size:15px;font-weight:700;color:{color}">{projected:.0f}</div>'
+                f'  <div style="height:6px;background:var(--bg-3);border-radius:3px;'
+                f'overflow:hidden">'
+                f'    <div style="width:{projected:.0f}%;height:100%;background:{color}"></div>'
+                f'  </div>'
+                f'</div>'
+            )
+        st.markdown(rows_html, unsafe_allow_html=True)
+        st.markdown(card_close(), unsafe_allow_html=True)
