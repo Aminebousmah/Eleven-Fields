@@ -36,9 +36,13 @@ Livrer un dashboard Streamlit complet d'analyse football sur les Big 5 européen
 **But** : avoir 5 saisons exploitables avec au moins les stats saison avancées.
 
 ### Tâches
-- [ ] Lancer Phase 1 du notebook (stats saison only) sur 2122, 2223, 2324, 2526
-  - via `LEAGUES_COMBINED` pour limiter le rate-limit
-- [ ] Vérifier que les 11 stat_types team_season et player_season sont présents par saison
+- [ ] ~~Lancer Phase 1 du notebook (stats saison only) sur 2122, 2223, 2324, 2526~~
+  - ❌ **bloqué** : FBref coupe l'accès depuis les IP résidentielles. Contourné ci-dessous.
+- [x] **Stats joueur 2122 / 2223 / 2324** via dataset Kaggle (9 stat_types, ~2900 joueurs par saison)
+- [x] **Stats joueur 2526** via dataset Kaggle (5 stat_types seulement, 2839 joueurs)
+- [x] **Stats équipe 1920 → 2526** via Understat (xG, xGA, npxG, PPDA, deep completions)
+- [ ] Compléter les 6 stat_types manquants de 2526 (passing, defense, possession, goal_shot_creation, keeper, keeper_adv)
+- [ ] Ajouter les stats joueur de 1920 et 2021 (aujourd'hui équipe uniquement)
 - [ ] Lancer Phase 2 (match-level) au moins sur 2324 et 2526 (priorité : récent)
 - [ ] Compléter `FB_shot_events.csv` pour 2122, 2223, 2324, 2526
 - [ ] Régénérer `FB_lineups.csv` / `FB_events.csv` pour 2324 et 2526
@@ -55,17 +59,18 @@ Livrer un dashboard Streamlit complet d'analyse football sur les Big 5 européen
 
 ---
 
-## Phase 2 — Reproductibilité & hygiène projet
+## Phase 2 — Reproductibilité & hygiène projet ⏳ EN COURS
 
 **But** : que quelqu'un (ou moi dans 6 mois) puisse cloner, installer et lancer l'app en < 10 min.
 
 ### Tâches
-- [ ] Créer `requirements.txt` (`pip freeze | grep -vE "^(pip|setuptools|wheel)"` filtré)
-- [ ] Pinner explicitement `soccerdata==1.8.8`
-- [ ] Créer `.gitignore` : `.venv/`, `__pycache__/`, `XXYY/*.csv`, `transfermarkt_data/*.csv`, `downloaded_files/`, `.kaggle/`, `*.pyc`
-- [ ] `git init` + premier commit
-- [ ] README.md court (3 sections : install, run, structure → renvoie à `CLAUDE.md`)
+- [x] Créer `requirements.txt` (`pip freeze | grep -vE "^(pip|setuptools|wheel)"` filtré)
+- [x] Pinner explicitement `soccerdata==1.8.8`
+- [x] Créer `.gitignore` : `.venv/`, `__pycache__/`, `XXYY/*.csv`, `transfermarkt_data/*.csv`, `downloaded_files/`, `.kaggle/`, `*.pyc`
+- [x] `git init` + premier commit
+- [x] README.md court (3 sections : install, run, structure → renvoie à `CLAUDE.md`)
 - [ ] Supprimer / déplacer le code mort : `load_us_player_stats`, `load_fm_match_stats`, `load_espn_matchsheet` si inutilisés à l'usage
+  - toujours présents dans `data/loader.py` (lignes 252, 260, 268)
 
 ### Critères de validation
 - `python -m venv .venv && pip install -r requirements.txt && streamlit run app.py` démarre sans erreur
@@ -77,17 +82,22 @@ Livrer un dashboard Streamlit complet d'analyse football sur les Big 5 européen
 
 ---
 
-## Phase 3 — Robustesse data & UX
+## Phase 3 — Robustesse data & UX ⏳ EN COURS
 
 **But** : éliminer les bugs silencieux et rendre les messages d'erreur actionnables.
 
 ### Tâches
-- [ ] Refactor `comparison.py` ligne 303 (sélecteur `target_season` illisible — extraire en helper)
-- [ ] Dédupliquer `_numeric()` (présent dans `loader.py` et `processor.py`) → factoriser
-- [ ] Ajouter un bouton "vider le cache Streamlit" dans la sidebar (`st.cache_data.clear()`)
+- [x] Refactor `comparison.py` ligne 303 (sélecteur `target_season` illisible — extraire en helper)
+  - le sélecteur a disparu lors de la refonte, plus aucune occurrence de `target_season`
+- [x] Dédupliquer `_numeric()` (présent dans `loader.py` et `processor.py`) → factoriser
+  - ne subsiste que dans `data/loader.py`
+- [x] Ajouter un bouton "vider le cache Streamlit" dans la sidebar (`st.cache_data.clear()`)
 - [ ] Quand un dashboard a `df.empty`, afficher *quelles* données manquent (stat_type + saison) plutôt qu'un `st.info` générique
-- [ ] `home.py` : mettre à jour la liste des modules (8 et non 4)
-- [ ] Stripper le HTML inline répétitif → composants `render_page_header(title, subtitle)` réutilisables
+  - fait sur Analyse joueur et Comparaison ; reste à propager aux autres onglets
+- [ ] ~~`home.py` : mettre à jour la liste des modules (8 et non 4)~~
+  - caduc : `home.py` n'est plus routé depuis la refonte à 7 onglets
+- [x] Stripper le HTML inline répétitif → composants `render_page_header(title, subtitle)` réutilisables
+  - `components/design.py` fournit `section_header`, `card_open`, `stat_tile`, `pct_row`
 
 ### Critères de validation
 - Pas de double définition de `_numeric`
@@ -174,5 +184,7 @@ Livrer un dashboard Streamlit complet d'analyse football sur les Big 5 européen
 
 - [x] fait · [ ] à faire · ⏳ en cours · ❌ bloqué (cause documentée)
 
-**Phase active : 1** (compléter la couverture des données).
-**Prochaine action concrète** : relancer Phase 1 du notebook sur les 4 saisons incomplètes une fois le rate-limit FBref retombé.
+**Phases actives : 1, 2 et 3** (données, hygiène, robustesse).
+**Prochaine action concrète** : compléter les 6 stat_types manquants de la saison 2526 — sans eux, le radar de comparaison d'un attaquant tombe à 3 métriques au lieu de 10.
+
+> Le suivi fonctionnel du projet (arbre des fonctionnalités, état de chacune) vit dans [`atlas.md`](atlas.md).

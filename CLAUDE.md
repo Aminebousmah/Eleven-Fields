@@ -113,3 +113,21 @@ Pas de tests, pas de build, pas de CI configurés.
 ## État des données (avril 2026)
 
 Seule la saison **2425** est complète (11/11 stat_types team+player + match-level + shot_events). Les saisons **2122 / 2223 / 2324 / 2526** n'ont que les 5 stat_types de base (legacy 1.9.0). Compléter ces saisons est la priorité d'extraction en cours — voir `dashboards/coverage.py` pour la matrice à jour.
+
+## Suivi du projet
+
+Ce projet est suivi par Atlas, qui lit atlas.md, plan.md et ce fichier sur GitHub.
+
+À la fin de chaque tâche qui modifie le code :
+
+- mets à jour atlas.md : le statut des fonctionnalités touchées, les fichiers
+  ajoutés, renommés ou supprimés, et une nouvelle fonctionnalité si la tâche en crée
+  une ;
+- coche dans plan.md ce qui vient d'être terminé, et change le statut d'une phase
+  qui démarre ou s'achève ;
+- si une convention ou un interdit a été décidé pendant la tâche, ajoute-le ici ;
+- termine ton récapitulatif par une ligne « Suivi : … » qui dit ce que tu as mis à
+  jour, ou « Suivi : rien à changer ».
+
+Un statut ne s'invente pas : dans le doute, `idée`, et dis-le moi. Ces fichiers ne
+comptent pour Atlas qu'une fois commités et poussés.
