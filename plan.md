@@ -71,6 +71,9 @@ Livrer un dashboard Streamlit complet d'analyse football sur les Big 5 européen
 - [x] README.md court (3 sections : install, run, structure → renvoie à `CLAUDE.md`)
 - [ ] Supprimer / déplacer le code mort : `load_us_player_stats`, `load_fm_match_stats`, `load_espn_matchsheet` si inutilisés à l'usage
   - toujours présents dans `data/loader.py` (lignes 252, 260, 268)
+- [ ] Committer `data/import_kaggle.py` et `data/import_understat.py`
+  - ⚠️ non suivis par Git alors qu'ils alimentent aujourd'hui toutes les saisons — voir « À trancher » dans `atlas.md`
+- [ ] Reprendre les sections périmées de `README.md` et `CLAUDE.md` (écarts signalés en tête de section)
 
 ### Critères de validation
 - `python -m venv .venv && pip install -r requirements.txt && streamlit run app.py` démarre sans erreur

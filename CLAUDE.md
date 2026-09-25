@@ -110,7 +110,24 @@ Pas de tests, pas de build, pas de CI configurés.
 | Modifier l'extraction FBref | `DataBaseHome.ipynb` (autoritaire) puis `data/scraper.py` |
 | Match Transfermarkt | `transfermarkt/matcher.py` |
 
-## État des données (avril 2026)
+## État des données
+
+> ⚠️ **Le paragraphe « avril 2026 » ci-dessous est périmé et n'a pas été réécrit — à trancher.**
+> Il annonce 5 stat_types pour 2122 / 2223 / 2324, qui en ont 9 depuis l'import Kaggle.
+> État vérifié le 25 septembre 2026 :
+>
+> | Saison | Stats joueur | Stats équipe | Source |
+> |---|---|---|---|
+> | 1920, 2021 | ❌ aucune | ✅ | Understat |
+> | 2122, 2223, 2324 | ✅ 9 stat_types (~2900 joueurs) | ✅ | Kaggle + Understat |
+> | 2425 | ✅ 11 stat_types + match-level | ✅ | FBref |
+> | 2526 | ⚠️ 5 stat_types (2839 joueurs) | ✅ | Kaggle + Understat |
+>
+> Conséquence à connaître : sur 2526, un radar de comparaison d'attaquant tombe à 3 métriques
+> au lieu de 10, faute de `passing`, `defense`, `possession` et `goal_shot_creation`.
+> Voir la section « À trancher » d'`atlas.md`.
+
+### Paragraphe d'origine (avril 2026, conservé tel quel)
 
 Seule la saison **2425** est complète (11/11 stat_types team+player + match-level + shot_events). Les saisons **2122 / 2223 / 2324 / 2526** n'ont que les 5 stat_types de base (legacy 1.9.0). Compléter ces saisons est la priorité d'extraction en cours — voir `dashboards/coverage.py` pour la matrice à jour.
 

@@ -21,6 +21,11 @@ Pas de scraping côté Transfermarkt : on consomme un dataset déjà publié, mi
 
 ## Fonctionnalités
 
+> ⚠️ **Section à reprendre — écarts connus au 25 septembre 2026.** Le dashboard « Analyse Match »
+> décrit ci-dessous a été supprimé, et `config.py` définit 29 profils de poste, pas 28. La
+> navigation compte aujourd'hui 7 onglets avec une bascule Joueurs/Clubs, pas 9 dashboards.
+> L'arbre à jour des fonctionnalités vit dans [`atlas.md`](atlas.md).
+
 ### 9 dashboards
 
 | Dashboard | Description |

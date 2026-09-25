@@ -89,6 +89,7 @@ Compose un onze de départ et sept remplaçants sur sept schémas tactiques, ave
 Épingle des cartes depuis les autres onglets et assemble un fil de texte à partir de la sélection.
 - `app.py`
 > Le tableau des cartes épinglées vit dans `st.session_state`, il n'est donc pas persisté : fermer l'onglet du navigateur vide la sélection. L'ordre se règle avec des boutons, Streamlit n'offrant pas de glisser-déposer natif.
+> Statut déduit du code seul, sans test de l'onglet en conditions réelles : à confirmer ou à passer en ligne (voir « À trancher »).
 
 ### Couverture des données — en ligne
 Matrice saison par type de fichier, pour voir d'un coup d'œil ce qui manque.
@@ -150,10 +151,12 @@ Dépendances figées, fichiers ignorés par Git, description de processus pour u
 > `soccerdata` est épinglé à la version exacte 1.8.8, pas à une plage : c'est volontaire et documenté dans le fichier lui-même.
 
 ### Documentation du projet — en ligne
-Guide de contribution, plan de développement et présentation générale.
+Guide de contribution, plan de développement, présentation générale et description fonctionnelle.
 - `CLAUDE.md`
 - `plan.md`
 - `README.md`
+- `atlas.md`
+> Ces fichiers ne sont lus par Atlas qu'une fois commités et poussés : une mise à jour restée en local ne compte pas. `README.md` et `CLAUDE.md` portent en tête de section un avertissement sur leurs passages périmés.
 
 ### Squelettes de paquets — en ligne
 Fichiers d'initialisation qui font des dossiers des modules importables.
@@ -198,3 +201,13 @@ Fichiers d'initialisation qui font des dossiers des modules importables.
 - Découper `components/charts.py`, `data/processor.py` et `dashboards/player_profile.py`, tous au-delà de sept cents lignes.
 - Mettre en place des tests sur les fonctions de calcul, aujourd'hui sans aucune couverture.
 - Décider d'un hébergement : le `Procfile` existe, mais rien n'est déployé.
+- Verser au dépôt les deux scripts qui alimentent réellement les données aujourd'hui, aujourd'hui non suivis par Git.
+- Corriger les deux écarts de description restants dans `README.md` et `CLAUDE.md` (voir « À trancher »).
+
+## À trancher
+Points relevés lors de la mise en place du suivi, le 25 septembre 2026, qu'une décision doit clore. Chacun est une incertitude assumée, pas un oubli.
+
+- **Les deux scripts d'import ne sont pas suivis par Git.** `data/import_kaggle.py` et `data/import_understat.py` sont ce qui remplit aujourd'hui les saisons 2021-22 à 2025-26, mais ils ne sont pas dans le dépôt. Aucune fonctionnalité de cet atlas ne peut donc les citer, et la fonctionnalité « Extraction FBref » décrit un pipeline gelé au lieu de la voie réellement utilisée. À committer, puis à décrire ici comme une fonctionnalité à part entière.
+- **L'état des données annoncé dans `CLAUDE.md` est périmé.** La section « État des données » y donne cinq types de statistiques pour 2021-22, 2022-23 et 2023-24, qui en ont neuf depuis l'import Kaggle. C'est le fichier lu à chaque session de travail : tant qu'il n'est pas corrigé, il induit en erreur.
+- **`README.md` décrit deux choses qui n'existent plus telles quelles** : un dashboard « Analyse Match » supprimé depuis, et vingt-huit profils de poste là où `config.py` en définit vingt-neuf.
+- **Le statut de Story est déduit du code, pas d'un essai.** Il est noté `en cours` parce que la sélection n'est pas persistée et que l'ordre se règle au bouton. Si l'onglet remplit son office en l'état, il passe `en ligne`.
